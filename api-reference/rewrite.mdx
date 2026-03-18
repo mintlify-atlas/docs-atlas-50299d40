@@ -10,7 +10,7 @@ The rewrite and promote functions run as a daily background pass to keep memory 
 ## reflectAndCleanMemory
 
 ```typescript
-import { reflectAndCleanMemory } from "nuggets";
+import { reflectAndCleanMemory } from "./src/nuggets/index.js";
 
 reflectAndCleanMemory(
   shelf: NuggetShelf,
@@ -52,7 +52,8 @@ Near-duplicate notes (Jaccard similarity ≥ 0.9 across the same subject, scope,
 **Returns** a [`ReflectionResult`](#reflectionresult).
 
 ```typescript
-import { NuggetShelf, reflectAndCleanMemory } from "nuggets";
+import { NuggetShelf } from "./src/nuggets/index.js";
+import { reflectAndCleanMemory } from "./src/nuggets/rewrite.js";
 
 const shelf = new NuggetShelf();
 shelf.loadAll();
@@ -80,7 +81,7 @@ for (const change of result.changes) {
 ## promoteFacts
 
 ```typescript
-import { promoteFacts } from "nuggets";
+import { promoteFacts } from "./src/nuggets/promote.js";
 
 promoteFacts(shelf: NuggetShelf): number
 ```
@@ -114,7 +115,8 @@ Sections are ordered with `learnings` and `preferences` first, then remaining se
 Returns the number of **new** entries added to `MEMORY.md` in this call. Updates to existing entries are applied silently and do not increment the count.
 
 ```typescript
-import { NuggetShelf, promoteFacts } from "nuggets";
+import { NuggetShelf } from "./src/nuggets/index.js";
+import { promoteFacts } from "./src/nuggets/promote.js";
 
 const shelf = new NuggetShelf();
 shelf.loadAll();
