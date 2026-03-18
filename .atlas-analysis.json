@@ -1,0 +1,120 @@
+{
+  "projectType": "saas",
+  "projectName": "Nuggets",
+  "projectDescription": "A personal AI assistant with holographic FHRR memory, a living Zettelkasten note graph, and a multi-channel messaging gateway across Telegram, WhatsApp, and Discord.",
+  "theme": "palm",
+  "primaryColor": "#040404",
+  "lightColor": "#0c86f5",
+  "darkColor": "#7cc4fc",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "setup"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/memory-overview",
+              "concepts/fhrr-fact-memory",
+              "concepts/note-graph",
+              "concepts/autonomous-rewriting"
+            ]
+          },
+          {
+            "group": "Messaging Gateway",
+            "pages": [
+              "gateway/overview",
+              "gateway/telegram",
+              "gateway/whatsapp",
+              "gateway/discord"
+            ]
+          },
+          {
+            "group": "Backend Modes",
+            "pages": [
+              "backends/overview",
+              "backends/pi",
+              "backends/codex",
+              "backends/local"
+            ]
+          },
+          {
+            "group": "Skills",
+            "pages": [
+              "skills/overview",
+              "skills/built-in",
+              "skills/custom"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/proactive-system"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Memory API",
+            "pages": [
+              "api-reference/nugget-class",
+              "api-reference/nugget-shelf",
+              "api-reference/graph-notes",
+              "api-reference/rewrite"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "api-reference/cli-commands"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "FHRR (Holographic Reduced Representation) fact memory — millisecond algebraic recall without embeddings or vector databases",
+    "Living Zettelkasten note graph with titles, tags, links, and FHRR similarity search",
+    "Autonomous daily rewriting pass that cleans, merges, relinks, and retags notes",
+    "Multi-channel messaging gateway supporting Telegram, WhatsApp, and Discord",
+    "Three backend modes: Pi, Codex CLI, and local OpenAI-compatible models",
+    "Proactive system with heartbeats, cron reminders, and scheduled memory reflection",
+    "Pluggable skill registry with scoped triggers and backend adapters",
+    "Promotion pipeline from graph notes to permanent MEMORY.md"
+  ],
+  "publicApiSurface": [
+    "Nugget.remember(key, value, noteMeta?)",
+    "Nugget.recall(query, sessionId?)",
+    "Nugget.forget(key)",
+    "Nugget.facts()",
+    "Nugget.createNote(title, content, tags?, meta?)",
+    "Nugget.editNote(noteId, newContent, updates?)",
+    "Nugget.searchNotes(query, limit?, opts?)",
+    "Nugget.addLink(note1, note2, reason)",
+    "Nugget.mergeNotes(target, source, reason)",
+    "Nugget.status()",
+    "Nugget.save(path?)",
+    "Nugget.load(path, opts?)",
+    "NuggetShelf (multi-nugget manager)",
+    "reflectAndCleanMemory(shelf, llmClient, opts?)",
+    "promoteFacts(nugget, path?)",
+    "nuggets remember <nugget> <key> <value>",
+    "nuggets recall <query> [--nugget <name>]",
+    "nuggets forget <nugget> <key>",
+    "nuggets list",
+    "nuggets facts <nugget>"
+  ]
+}
