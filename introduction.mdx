@@ -1,0 +1,120 @@
+---
+title: "Introduction"
+description: "Nuggets is a personal AI assistant with holographic memory — FHRR fact recall, a living note graph, and a multi-channel messaging gateway."
+---
+
+Nuggets is a personal AI assistant that remembers. It combines fast local FHRR memory, a living note graph, and a multi-channel messaging gateway so your assistant can learn from conversations, reorganize its own memory, and keep working across restarts.
+
+Most agents forget between sessions. RAG fixes that, but it usually means embeddings, a vector database, and extra infrastructure. Nuggets takes a lighter approach: pure TypeScript, local JSON storage, and algebraic memory math that runs in under a millisecond.
+
+## The three memory layers
+
+Nuggets separates memory into three cooperating layers:
+
+| Layer | Best for | Storage |
+|---|---|---|
+| **FHRR facts** | Short key-value facts recalled by query | `.nugget.json` files |
+| **Note graph** | Rich notes with titles, tags, links, and context | `~/.nuggets/graph/graph.json` |
+| **MEMORY.md** | Permanent, high-value knowledge | Promoted from the note graph |
+
+<Info>
+  All memory is local. No cloud database, no embeddings API — just fast algebraic math and JSON files on your machine.
+</Info>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="FHRR fact memory" icon="bolt" href="/concepts/fhrr-fact-memory">
+    Short facts are stored as phase-based complex vectors and recalled algebraically in about a millisecond. No embeddings or vector database required.
+  </Card>
+  <Card title="Living note graph" icon="diagram-project" href="/concepts/note-graph">
+    Richer memory lives in a Zettelkasten-style graph with titles, content, tags, links, and deterministic FHRR vectors. Graph search uses both text overlap and FHRR similarity.
+  </Card>
+  <Card title="Autonomous rewriting" icon="arrows-rotate" href="/concepts/autonomous-rewriting">
+    The assistant runs a daily cleanup pass that merges near-duplicates, improves tags, adds related links, and archives low-value notes — without any manual intervention.
+  </Card>
+  <Card title="Multi-channel gateway" icon="messages" href="/gateway/overview">
+    Connect Telegram, WhatsApp, and Discord to a single AI backend. The proactive system handles heartbeat follow-ups, cron reminders, and scheduled maintenance.
+  </Card>
+  <Card title="Backend modes" icon="server" href="/backends/overview">
+    Choose between Pi, Codex CLI, or a local OpenAI-compatible server (Ollama, MLX). Switch backends without changing your memory data.
+  </Card>
+  <Card title="Skills" icon="puzzle-piece" href="/skills/overview">
+    Skills live in a Nuggets-owned registry at `skills/<id>/`. Each skill has a `skill.json` for metadata and a `SKILL.md` for instructions. Manage sticky skills in chat with `/skills`, `/skill use`, and `/skill remove`.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+```text
+src/
+  nuggets/
+    core.ts
+    memory.ts
+    graph.ts
+    rewrite.ts
+    shelf.ts
+    promote.ts
+    index.ts
+
+  gateway/
+    main.ts
+    config.ts
+    agent-pool.ts
+    agent-session.ts
+    router.ts
+    pi-rpc.ts
+    codex-rpc.ts
+    local-model-rpc.ts
+    telegram.ts
+    discord.ts
+    whatsapp.ts
+    event-queue.ts
+    cron.ts
+    heartbeat.ts
+
+.pi/extensions/
+  nuggets.ts
+  proactive.ts
+
+skills/
+  nuggets-memory/
+  reviewer/
+  planner/
+  debugger/
+  researcher/
+```
+
+## How it flows
+
+```text
+You (Telegram / WhatsApp / Discord)
+  │
+  ▼
+Gateway → router → backend session
+  │                    │
+  │                    ▼
+  │              Nuggets memory stack
+  │              ├─ FHRR facts
+  │              ├─ graph notes
+  │              └─ rewrite pass
+  │
+  ├─ heartbeat
+  ├─ cron reminders
+  └─ daily memory reflection
+```
+
+**Normal path:**
+1. You send a message.
+2. The backend answers and can query Nuggets first.
+3. Useful facts or notes get stored.
+4. High-value notes are promoted to `MEMORY.md`.
+
+**Proactive path:**
+1. A heartbeat or cron fires.
+2. The agent checks if it should message you.
+3. A silent maintenance job can also trigger `reflectAndCleanMemory`.
+
+<Card title="Get started" icon="rocket" href="/quickstart">
+  Install Nuggets and send your first message in under five minutes.
+</Card>

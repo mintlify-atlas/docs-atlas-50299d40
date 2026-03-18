@@ -1,0 +1,159 @@
+---
+title: "Autonomous Rewriting"
+description: "How Nuggets runs a daily bounded reflection pass to normalize notes, merge near-duplicates, improve tags, add links, archive low-value entries, and promote high-hit notes to MEMORY.md."
+---
+
+The note graph accumulates entries over time. Without any cleanup, notes can become stale, duplicate facts can pile up, and useful information can get buried. Nuggets addresses this with an autonomous daily reflection pass that keeps the graph healthy without requiring any manual intervention.
+
+The reflection pass is deliberately conservative. It inspects a bounded number of notes per run, applies only safe transformations, and never deletes anything permanently — hidden notes are always soft-deleted and can be recovered.
+
+## How the reflection pass works
+
+The `reflectAndCleanMemory` function in `src/nuggets/rewrite.ts` is the entry point for the daily pass:
+
+```typescript
+export function reflectAndCleanMemory(
+  shelf: NuggetShelf,
+  opts?: { nuggetName?: string; limit?: number },
+): ReflectionResult
+```
+
+It returns a `ReflectionResult` with counts of what changed:
+
+```typescript
+export interface ReflectionResult {
+  ranAt: string;       // ISO timestamp of this run
+  inspected: number;   // Notes examined
+  rewritten: number;   // Notes with normalized content
+  merged: number;      // Near-duplicate pairs merged
+  hidden: number;      // Low-value notes archived
+  tagged: number;      // Notes with improved tags
+  linked: number;      // New links added between related notes
+  changes: ReflectionChange[];
+}
+```
+
+## What it does
+
+The pass runs five operations in sequence:
+
+<Steps>
+  <Step title="Select notes to inspect">
+    Notes are sorted by a quality score that prioritizes the most in-need notes first: notes that are older, lack tags, or lack links score higher. The pass inspects at most `MEMORY_REFLECTION_MAX_NOTES` notes (default: 10) per run.
+  </Step>
+  <Step title="Archive low-value notes">
+    A note is considered low-value if:
+    - Its content is empty
+    - Its content is 2 characters or fewer and it has never been recalled
+    - Its title starts with `tmp`, `temp`, or `scratch` and it has zero hits
+
+    Low-value notes are soft-deleted (set `hidden=true`, `archivedAt` timestamp recorded). They remain in the graph file and can be recovered by setting `hidden=false`.
+  </Step>
+  <Step title="Normalize stale content">
+    For each surviving note, the content is normalized: trailing whitespace is removed, consecutive blank lines are collapsed, and duplicate lines are deduplicated. If the normalized content differs from the stored content, the note is updated and its `lastRewrittenAt` timestamp is set.
+  </Step>
+  <Step title="Improve tags">
+    Tags are derived from the note's scope, type, title, and content tokens. The derivation adds structured tags like `scope:user` and `type:fact`, and content-derived tags for notes about files, preferences, or reflections. If the derived tag set differs from the current tags, the note is updated.
+  </Step>
+  <Step title="Merge near-duplicates">
+    Notes within the same nugget are compared pairwise using Jaccard similarity on their content tokens. If two notes share 90% or more of their tokens and have the same `subject`, `scope`, and `type`, the shorter one is merged into the longer one. The merged-away note is soft-deleted with a link back to the surviving note.
+  </Step>
+  <Step title="Add missing links">
+    For notes with fewer than 2 links, the pass scans other notes in the same nugget for token overlap. If two notes share at least 2 significant tokens and have compatible subjects, a bidirectional link is added with a reason like `"shared context: token1, token2"`.
+  </Step>
+</Steps>
+
+## When it runs
+
+The reflection pass is triggered in two ways:
+
+| Trigger | Timing | Source |
+|---|---|---|
+| **Scheduled cron job** | `MEMORY_REFLECTION_HOUR:MEMORY_REFLECTION_MINUTE` (default: 09:00) | `src/gateway/cron.ts` |
+| **Heartbeat fallback** | During waking hours if the scheduled job was missed | `src/gateway/heartbeat.ts` |
+
+The job runs silently — it does not send a message to any chat channel. The result is logged internally.
+
+### Configuration env vars
+
+| Variable | Default | Description |
+|---|---|---|
+| `MEMORY_REFLECTION_HOUR` | `9` | Hour (0–23) when the daily pass runs |
+| `MEMORY_REFLECTION_MINUTE` | `0` | Minute within the hour |
+| `MEMORY_REFLECTION_MAX_NOTES` | `10` | Maximum notes inspected per run |
+
+## Promotion to MEMORY.md
+
+The `promoteFacts` function in `src/nuggets/promote.ts` runs alongside the reflection pass and handles promotion of high-value notes to `MEMORY.md`:
+
+```typescript
+export function promoteFacts(shelf: NuggetShelf): number
+```
+
+Promotion rules:
+- A note must have `hidden=false`
+- A note must have `hits >= 3` (recalled in at least 3 separate sessions)
+- The note's title and content are written to `MEMORY.md` under a section determined by its subject and scope
+
+The promotion threshold constant is defined in `promote.ts`:
+
+```typescript
+const PROMOTE_THRESHOLD = 3;
+```
+
+`MEMORY.md` is structured with `##` sections and bullet entries:
+
+```markdown
+# Memory
+
+Auto-promoted from nuggets graph notes (3+ recalls across sessions).
+
+## learnings
+
+- **JWT token format**: Tokens use RS256 signing. Public key is at src/auth/keys/public.pem.
+
+## user
+
+- **style preference**: 2-space indent, no semicolons
+```
+
+Sections are ordered with `learnings` and `preferences` first, then alphabetically. The file is written atomically to prevent corruption.
+
+## Triggering manually
+
+You can invoke the reflection pass directly from code or from a Pi extension:
+
+```typescript
+import { reflectAndCleanMemory } from "./src/nuggets/rewrite.js";
+import { promoteFacts } from "./src/nuggets/promote.js";
+
+// Run the reflection pass on all nuggets
+const result = reflectAndCleanMemory(shelf);
+console.log(`Inspected ${result.inspected} notes`);
+console.log(`Merged: ${result.merged}, Hidden: ${result.hidden}, Linked: ${result.linked}`);
+
+// Promote high-hit notes to MEMORY.md
+const promoted = promoteFacts(shelf);
+console.log(`Promoted ${promoted} new entries to MEMORY.md`);
+```
+
+From a Pi extension (`.pi/extensions/proactive.ts`), `reflectAndCleanMemory` is exposed as the `reflectAndCleanMemory` tool and can be called by the agent during the daily maintenance window.
+
+## The `ReflectionChange` record
+
+Every action taken by the pass is recorded as a `ReflectionChange`:
+
+```typescript
+export interface ReflectionChange {
+  type: "rewrite" | "merge" | "hide" | "tag" | "link";
+  nuggetName: string;
+  noteId: string;
+  detail: string; // Human-readable description of what changed
+}
+```
+
+The full `changes` array in `ReflectionResult` gives you an audit trail of every transformation made during a run.
+
+<Warning>
+  The reflection pass is intentionally conservative. The 10-note limit (`MEMORY_REFLECTION_MAX_NOTES`) means a large graph may take multiple days to fully process. This is by design — a bounded pass avoids long-running blocking operations and keeps the memory system predictable.
+</Warning>

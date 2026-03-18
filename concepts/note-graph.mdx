@@ -1,0 +1,244 @@
+---
+title: "Note Graph"
+description: "How Nuggets stores richer memory in a Zettelkasten-style graph of linked notes, with FHRR-powered semantic search and a flexible metadata model."
+---
+
+The note graph is the second layer of the Nuggets memory stack. Where FHRR facts are optimized for sub-millisecond lookup of short key-value pairs, the note graph stores richer context: notes with titles, full content, tags, links to related notes, and a metadata model that tracks scope, type, source, and stability.
+
+The graph lives in a single JSON file at `~/.nuggets/graph/graph.json` and is managed by the `NuggetGraph` class in `src/nuggets/graph.ts`.
+
+## The `MemoryNote` structure
+
+Every entry in the graph is a `MemoryNote`:
+
+```typescript
+export interface MemoryNote extends NoteMetadata {
+  id: string;               // UUID fragment, e.g. "note-project-a1b2c3d4"
+  nuggetName: string;       // Which nugget this note belongs to
+  title: string;            // Short human-readable title
+  content: string;          // Full note content
+  tags: string[];           // Normalized lowercase tags
+  links: NoteLink[];        // Bidirectional links to related notes
+  vector: NoteVectorSpec;   // Compact recipe for regenerating the FHRR vector
+  hidden: boolean;          // Soft-deleted notes are hidden, not removed
+  kind: "fact" | "note";   // Auto-created facts vs. agent/user notes
+  sourceKey?: string;       // Original fact key for kind="fact" notes
+  hits: number;             // Recall count across sessions
+  lastHitSession: string;   // Session ID of last recall
+  createdAt: string;        // ISO timestamp
+  updatedAt: string;        // ISO timestamp
+  lastAccessedAt: string;   // ISO timestamp
+  lastRewrittenAt?: string; // Set by the reflection pass
+  archivedAt?: string;      // Set when hidden=true
+}
+```
+
+### Metadata fields (from `NoteMetadata`)
+
+```typescript
+export interface NoteMetadata {
+  subject: string;           // e.g. "user:primary", "assistant:self", "shared:project"
+  scope: MemoryScope;        // "self" | "user" | "shared" | "project" | "session"
+  type: MemoryType;          // See MemoryType below
+  source: MemorySource;      // How the note was created
+  confidence: number;        // 0.0–1.0
+  stability: MemoryStability; // "temporary" | "durable"
+}
+```
+
+### Type reference
+
+<AccordionGroup>
+  <Accordion title="MemoryScope">
+    ```typescript
+    export type MemoryScope = "self" | "user" | "shared" | "project" | "session";
+    ```
+
+    | Value | Meaning |
+    |---|---|
+    | `self` | Information about the assistant itself |
+    | `user` | Information about the user |
+    | `shared` | Shared context, server config, or workspace state |
+    | `project` | Project-specific knowledge |
+    | `session` | Temporary, current-session only |
+  </Accordion>
+  <Accordion title="MemoryType">
+    ```typescript
+    export type MemoryType =
+      | "fact"
+      | "note"
+      | "preference"
+      | "reflection"
+      | "self_model"
+      | "project"
+      | "relationship"
+      | "style";
+    ```
+
+    The type is inferred automatically from the note's scope, key, tags, and content. You can override it by passing a `GraphNoteMetaInput` when creating or editing a note.
+  </Accordion>
+  <Accordion title="MemorySource">
+    ```typescript
+    export type MemorySource =
+      | "explicit_user"
+      | "agent_reflection"
+      | "tool_observation"
+      | "inferred"
+      | "system";
+    ```
+
+    Sources affect the default confidence: `tool_observation` gets 0.98, `agent_reflection` gets 0.75, `inferred` gets 0.60.
+  </Accordion>
+  <Accordion title="MemoryStability">
+    ```typescript
+    export type MemoryStability = "temporary" | "durable";
+    ```
+
+    `temporary` notes (e.g. `scope: "session"`) are not promoted to `MEMORY.md`. `durable` notes with 3+ hits are eligible for promotion.
+  </Accordion>
+</AccordionGroup>
+
+## The two kinds of notes
+
+Notes have a `kind` field that indicates how they were created:
+
+| Kind | Created by | `sourceKey` |
+|---|---|---|
+| `"fact"` | `remember(key, value)` — auto-mirrored from the fact layer | The original fact key |
+| `"note"` | `createNote(title, content)` — agent or user created | Not set |
+
+Fact notes are kept in sync with the fact layer. When you call `forget(key)`, the corresponding `"fact"` note is removed from the graph. When you edit a `"fact"` note's title or content, the change propagates back to the fact layer.
+
+## Links between notes
+
+Notes can link to each other with a reason string. Links are always **bidirectional** — when you add a link from A to B, a reverse link from B to A is added automatically:
+
+```typescript
+export interface NoteLink {
+  to: string;       // Target note ID
+  reason: string;   // Human-readable reason for the link
+  createdAt: string; // ISO timestamp
+}
+```
+
+Duplicate links (same target and reason) are deduplicated automatically. Dangling links (pointing to deleted notes) are cleaned up when notes are removed.
+
+## How graph search works
+
+`searchNotes(query, limit, opts)` combines two signals:
+
+1. **Text score** — checks whether the query string appears verbatim in the note (title, content, tags, subject, scope, type), then counts token overlap between the query and the note. Uses a stop-word list to filter common words.
+
+2. **Vector score** — regenerates the FHRR vector for the query from its token basis, regenerates the note's vector from its stored `NoteVectorSpec`, then computes cosine similarity.
+
+The final score is a weighted blend:
+
+```
+score = (vectorScore × 0.42) + (textScore × 0.48) + metadataBoost
+```
+
+where `metadataBoost` adds up to ~0.13 for durable, high-confidence, user/self-scoped notes. Results are returned in descending score order, re-ranked through a softmax with temperature 0.35 to sharpen the separation between candidates.
+
+### `NoteVectorSpec` — compact vector recipe
+
+Instead of storing a 16384-element complex vector on disk, the graph stores a short `basis` array of token strings:
+
+```typescript
+export interface NoteVectorSpec {
+  seed: number;    // Length of the joined basis string (informational)
+  basis: string[]; // Up to 20 token strings, e.g. ["title:auth", "tag:files", ...]
+}
+```
+
+The actual FHRR vector is regenerated from these tokens on every search using `makeKeyFromText` and `bind` with role keys. This keeps the graph file small even with many notes.
+
+## Filtering with `NoteFilterOptions`
+
+```typescript
+export interface NoteFilterOptions {
+  includeHidden?: boolean; // Include soft-deleted notes (default: false)
+  subject?: string;        // Filter by exact subject string
+  scope?: MemoryScope;     // Filter by scope
+  type?: MemoryType;       // Filter by type
+}
+```
+
+Pass filter options to `listNotes`, `searchNotes`, or `reflect` calls to narrow down the note set.
+
+## Code examples
+
+### Creating and linking notes
+
+```typescript
+import { Nugget } from "./src/nuggets/memory.js";
+
+const n = new Nugget({ name: "project" });
+
+// Create a note with tags
+const authNote = n.createNote(
+  "Auth middleware",
+  "Authentication is handled in src/auth/middleware.ts:47. Uses JWT with RS256.",
+  ["auth", "files"],
+);
+
+// Create a related note
+const tokenNote = n.createNote(
+  "JWT token format",
+  "Tokens use RS256 signing. Public key is at src/auth/keys/public.pem.",
+  ["auth", "jwt"],
+);
+
+// Link them together
+n.addLink(authNote.id, tokenNote.id, "auth middleware uses JWT tokens");
+
+// Search the graph
+const results = n.searchNotes("authentication");
+for (const { note, score } of results) {
+  console.log(`[${score.toFixed(3)}] ${note.title}`);
+}
+```
+
+### Using filter options
+
+```typescript
+// List only user-scoped notes
+const userNotes = n.listNotes({ scope: "user" });
+
+// Search only durable project notes
+const projectResults = n.searchNotes("deployment", 5, {
+  scope: "project",
+});
+
+// Include hidden/archived notes in a listing
+const allNotes = n.listNotes({ includeHidden: true });
+```
+
+### In Pi-backed flows
+
+When using the Pi backend, the agent gets graph tools directly through `.pi/extensions/nuggets.ts`:
+
+```typescript
+// Tools available to the agent:
+createNote(title, content)      // Create a new note
+addLink(note1, note2, reason)   // Link two notes by title or ID
+editNote(noteId, newContent)    // Update a note's content
+searchNotes(query)              // Semantic + text search
+```
+
+<Tip>
+  Prefer `createNote` over `remember` when the information has more than one sentence of context, when it should link to other notes, or when it is likely to be rewritten or merged later by the daily reflection pass.
+</Tip>
+
+## Graph file location
+
+All nuggets in a save directory share a single graph file:
+
+```
+~/.nuggets/
+  project.nugget.json   ← FHRR fact layer for "project" nugget
+  locations.nugget.json ← FHRR fact layer for "locations" nugget
+  graph/
+    graph.json          ← All notes for all nuggets
+```
+
+The graph file is written atomically (write to `.tmp`, then rename) to prevent corruption.

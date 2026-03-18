@@ -1,0 +1,137 @@
+---
+title: "Local Model Backend"
+description: "Run Nuggets against any OpenAI-compatible local server — Ollama, MLX, or your own inference endpoint."
+---
+
+The Local backend connects Nuggets directly to an OpenAI-compatible HTTP endpoint. There are no external subprocesses, no CLI tools, and no shell access. The agent responds through a standard `/chat/completions` call and maintains conversation history as an in-memory JSON file.
+
+This backend is conversational only. The model cannot call tools, execute code, or query the Nuggets memory stack directly — but active skill instructions are inlined into the system prompt so the model has the context it needs to be helpful.
+
+<Warning>
+  The Local backend does not support tool use. If the user asks the agent to remember something for later, the agent will explain that this backend is conversational-only and cannot persist data.
+</Warning>
+
+## Configuration
+
+```bash
+# .env
+AGENT_BACKEND=local
+AGENT_MODEL=llama3             # Required — the model name to request
+LOCAL_MODEL_PROVIDER=ollama   # ollama | mlx | (leave empty for a custom URL)
+LOCAL_MODEL_BASE_URL=         # Optional — override the default URL for the provider
+LOCAL_MODEL_API_KEY=          # Optional — bearer token if your server requires one
+```
+
+### Provider defaults
+
+When you set `LOCAL_MODEL_PROVIDER`, the backend uses a built-in default URL if you do not provide one explicitly:
+
+| Provider | Default base URL |
+|---|---|
+| `ollama` | `http://127.0.0.1:11434/v1` |
+| `mlx` | `http://127.0.0.1:8080/v1` |
+| _(custom)_ | You must set `LOCAL_MODEL_BASE_URL` |
+
+When `AGENT_BACKEND=local` and `LOCAL_MODEL_PROVIDER` is not set, the provider defaults to `ollama`.
+
+### Endpoint construction
+
+The backend always calls `/chat/completions` on the resolved base URL. If you set `LOCAL_MODEL_BASE_URL` to a full path ending in `/chat/completions`, the backend strips the suffix and appends it once — so `http://127.0.0.1:11434/v1/chat/completions` and `http://127.0.0.1:11434/v1` both resolve to the same endpoint.
+
+## Session and history
+
+The backend persists chat history to `local-model-session.json` in the per-conversation session directory. On startup it loads any existing history so conversations continue across gateway restarts.
+
+History is trimmed to the most recent 40 messages before each request to prevent unbounded context growth. The system prompt is prepended on every call and does not count toward the 40-message limit.
+
+## Skills
+
+Because the Local backend has no file or shell tools, it cannot read `SKILL.md` files on demand. Instead, active skill contents are inlined directly into the system prompt for every request:
+
+```text
+Active project skills for this request:
+
+## Skill: reviewer
+Description: Code review assistant that checks for correctness, style, and edge cases.
+Scope: sticky
+Path: /path/to/skills/reviewer/SKILL.md
+
+<full SKILL.md contents here>
+```
+
+Skills with `adapters.local.enabled` set to `false` in their `skill.json` are excluded. Manage active skills in chat with the standard `/skill` commands.
+
+## Setting up Ollama
+
+<Steps>
+  <Step title="Install Ollama">
+    Download and install Ollama from [ollama.com](https://ollama.com). On macOS and Linux, the installer also starts the Ollama service.
+  </Step>
+  <Step title="Pull a model">
+    ```bash
+    ollama pull llama3
+    ```
+  </Step>
+  <Step title="Configure Nuggets">
+    ```bash
+    # .env
+    AGENT_BACKEND=local
+    LOCAL_MODEL_PROVIDER=ollama
+    AGENT_MODEL=llama3
+    ```
+  </Step>
+  <Step title="Start the gateway">
+    ```bash
+    npm run dev
+    ```
+
+    Nuggets connects to Ollama at `http://127.0.0.1:11434/v1/chat/completions` automatically.
+  </Step>
+</Steps>
+
+## Setting up MLX
+
+<Steps>
+  <Step title="Install mlx-lm">
+    ```bash
+    pip install mlx-lm
+    ```
+  </Step>
+  <Step title="Start the MLX server">
+    ```bash
+    mlx_lm.server --model mlx-community/Llama-3.2-3B-Instruct-4bit --port 8080
+    ```
+  </Step>
+  <Step title="Configure Nuggets">
+    ```bash
+    # .env
+    AGENT_BACKEND=local
+    LOCAL_MODEL_PROVIDER=mlx
+    AGENT_MODEL=mlx-community/Llama-3.2-3B-Instruct-4bit
+    ```
+  </Step>
+  <Step title="Start the gateway">
+    ```bash
+    npm run dev
+    ```
+
+    Nuggets connects to the MLX server at `http://127.0.0.1:8080/v1/chat/completions` automatically.
+  </Step>
+</Steps>
+
+## Using a custom endpoint
+
+If you are running a different OpenAI-compatible server, set the base URL directly:
+
+```bash
+# .env
+AGENT_BACKEND=local
+LOCAL_MODEL_PROVIDER=
+LOCAL_MODEL_BASE_URL=http://192.168.1.100:8000/v1
+LOCAL_MODEL_API_KEY=my-secret-key   # If your server requires authentication
+AGENT_MODEL=my-model-name
+```
+
+<Tip>
+  Any server that implements the `POST /chat/completions` endpoint from the OpenAI API spec works as a local backend, including LM Studio, llama.cpp server, vLLM, and others.
+</Tip>

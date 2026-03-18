@@ -1,0 +1,393 @@
+---
+title: "Graph Notes"
+description: "TypeScript types and interfaces exported from the Nuggets note graph. Every fact and note stored by a Nugget is represented as a MemoryNote in the graph."
+---
+
+The graph layer lives in `~/.nuggets/graph/graph.json` and is shared across all nuggets in the same `saveDir`. All types below are exported from the `nuggets` package.
+
+---
+
+## MemoryNote
+
+The primary record type. Every fact and free-form note in the graph is a `MemoryNote`.
+
+```typescript
+export interface MemoryNote extends NoteMetadata {
+  id: string;
+  nuggetName: string;
+  title: string;
+  content: string;
+  tags: string[];
+  links: NoteLink[];
+  vector: NoteVectorSpec;
+  hidden: boolean;
+  kind: "fact" | "note";
+  sourceKey?: string;
+  hits: number;
+  lastHitSession: string;
+  createdAt: string;
+  updatedAt: string;
+  lastAccessedAt: string;
+  lastRewrittenAt?: string;
+  archivedAt?: string;
+}
+```
+
+<ResponseField name="id" type="string" required>
+  Globally unique identifier in the form `fact-<nuggetName>-<8-char-uuid>` or `note-<nuggetName>-<8-char-uuid>`.
+</ResponseField>
+
+<ResponseField name="nuggetName" type="string" required>
+  Name of the nugget that owns this note. Immutable after creation.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Human-readable title. For fact-kind notes this is the fact key.
+</ResponseField>
+
+<ResponseField name="content" type="string" required>
+  Note body or fact value. Whitespace is normalised on write.
+</ResponseField>
+
+<ResponseField name="tags" type="string[]" required>
+  Lower-cased, hyphenated tags. Always includes `<nuggetName>`, `scope:<scope>`, and `type:<type>` system tags.
+</ResponseField>
+
+<ResponseField name="links" type="NoteLink[]" required>
+  Outbound links to other notes. See [`NoteLink`](#notelink).
+</ResponseField>
+
+<ResponseField name="vector" type="NoteVectorSpec" required>
+  FHRR vector specification used for similarity search. See [`NoteVectorSpec`](#notevectorspec).
+</ResponseField>
+
+<ResponseField name="hidden" type="boolean" required>
+  `true` when the note has been soft-deleted. Hidden notes are excluded from search and `listNotes` by default.
+</ResponseField>
+
+<ResponseField name="kind" type='"fact" | "note"' required>
+  `"fact"` for notes mirrored from the FHRR fact store. `"note"` for free-form notes created with `createNote`.
+</ResponseField>
+
+<ResponseField name="sourceKey" type="string">
+  The original fact key for fact-kind notes. `undefined` for free-form notes.
+</ResponseField>
+
+<ResponseField name="hits" type="number" required>
+  Number of times this note has been recalled across distinct sessions.
+</ResponseField>
+
+<ResponseField name="lastHitSession" type="string" required>
+  Session ID of the most recent hit. Empty string if never recalled.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string" required>
+  ISO 8601 timestamp of when the note was first created.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string" required>
+  ISO 8601 timestamp of the most recent write.
+</ResponseField>
+
+<ResponseField name="lastAccessedAt" type="string" required>
+  ISO 8601 timestamp of the most recent read or recall.
+</ResponseField>
+
+<ResponseField name="lastRewrittenAt" type="string">
+  ISO 8601 timestamp of the most recent reflection rewrite, if any.
+</ResponseField>
+
+<ResponseField name="archivedAt" type="string">
+  ISO 8601 timestamp set when the note is soft-deleted. `undefined` while the note is visible.
+</ResponseField>
+
+In addition, `MemoryNote` extends [`NoteMetadata`](#notemetadata), so every note also carries `subject`, `scope`, `type`, `source`, `confidence`, and `stability`.
+
+---
+
+## NoteMetadata
+
+Semantic metadata attached to every note and inferred automatically from the key, content, and tags when not supplied explicitly.
+
+```typescript
+export interface NoteMetadata {
+  subject: string;
+  scope: MemoryScope;
+  type: MemoryType;
+  source: MemorySource;
+  confidence: number;
+  stability: MemoryStability;
+}
+```
+
+<ResponseField name="subject" type="string" required>
+  Semantic owner of this memory. Common values: `"user:primary"`, `"assistant:self"`, `"shared:project"`, `"session:current"`.
+</ResponseField>
+
+<ResponseField name="scope" type="MemoryScope" required>
+  Visibility scope. See [`MemoryScope`](#memoryscope).
+</ResponseField>
+
+<ResponseField name="type" type="MemoryType" required>
+  Categorisation of what kind of memory this is. See [`MemoryType`](#memorytype).
+</ResponseField>
+
+<ResponseField name="source" type="MemorySource" required>
+  How this memory was acquired. See [`MemorySource`](#memorysource).
+</ResponseField>
+
+<ResponseField name="confidence" type="number" required>
+  Degree of certainty in the content, in the range `[0, 1]`. Clamped to valid range on write.
+</ResponseField>
+
+<ResponseField name="stability" type="MemoryStability" required>
+  Whether the memory is expected to persist across sessions. See [`MemoryStability`](#memorystability).
+</ResponseField>
+
+---
+
+## MemoryScope
+
+```typescript
+export type MemoryScope = "self" | "user" | "shared" | "project" | "session";
+```
+
+| Value | Meaning |
+|---|---|
+| `"self"` | Belongs to the assistant's own model or persona. |
+| `"user"` | Belongs to the primary user (preferences, personal details). |
+| `"shared"` | Shared between assistant and user, or cross-cutting context. |
+| `"project"` | Scoped to the current repository or project. |
+| `"session"` | Temporary, valid only for the current session. |
+
+<Tip>
+  You can set the scope explicitly on a fact key using a prefix: `user:`, `self:`, `shared:`, `project:`, or `session:`. Without a prefix, Nuggets infers the scope from the key text and content.
+</Tip>
+
+---
+
+## MemoryType
+
+```typescript
+export type MemoryType =
+  | "fact"
+  | "note"
+  | "preference"
+  | "reflection"
+  | "self_model"
+  | "project"
+  | "relationship"
+  | "style";
+```
+
+| Value | Meaning |
+|---|---|
+| `"fact"` | A short key-value fact from the FHRR store. |
+| `"note"` | A free-form note created with `createNote`. |
+| `"preference"` | A user or assistant preference. |
+| `"reflection"` | A note generated during a reflection pass. |
+| `"self_model"` | Information about the assistant's own behaviour or identity. |
+| `"project"` | Project-level context such as architecture or conventions. |
+| `"relationship"` | A relationship between two entities. |
+| `"style"` | A style guideline or coding convention. |
+
+---
+
+## MemorySource
+
+```typescript
+export type MemorySource =
+  | "explicit_user"
+  | "agent_reflection"
+  | "tool_observation"
+  | "inferred"
+  | "system";
+```
+
+| Value | Meaning |
+|---|---|
+| `"explicit_user"` | The user directly stated this information. |
+| `"agent_reflection"` | The agent derived this during a reflection pass. |
+| `"tool_observation"` | Observed from a tool call (file reads, edits, etc.). |
+| `"inferred"` | Inferred from context, lower confidence. |
+| `"system"` | Injected by the system or infrastructure. |
+
+---
+
+## MemoryStability
+
+```typescript
+export type MemoryStability = "temporary" | "durable";
+```
+
+| Value | Meaning |
+|---|---|
+| `"temporary"` | Expected to expire or become irrelevant after the current session. Used automatically for `session`-scoped notes and keys prefixed with `_`, `tmp`, or `scratch`. |
+| `"durable"` | Expected to remain relevant across sessions. The default for most notes. |
+
+---
+
+## NoteLink
+
+A directed link from one note to another, stored on both endpoints when created through [`addLink`](/api-reference/nugget-class#addlink).
+
+```typescript
+export interface NoteLink {
+  to: string;
+  reason: string;
+  createdAt: string;
+}
+```
+
+<ResponseField name="to" type="string" required>
+  ID of the target note.
+</ResponseField>
+
+<ResponseField name="reason" type="string" required>
+  Human-readable description of the relationship.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string" required>
+  ISO 8601 timestamp of when the link was created.
+</ResponseField>
+
+---
+
+## NoteVectorSpec
+
+The FHRR vector representation of a note, stored in the graph and used for semantic similarity search.
+
+```typescript
+export interface NoteVectorSpec {
+  seed: number;
+  basis: string[];
+}
+```
+
+<ResponseField name="seed" type="number" required>
+  Numeric seed derived from the basis string length. Used as a quick identity hash.
+</ResponseField>
+
+<ResponseField name="basis" type="string[]" required>
+  Up to 20 string tokens representing the note's semantic basis (title tokens, content tokens, tag tokens, link tokens, and metadata tokens such as `kind:fact` or `scope:user`). The vector is reconstructed from these tokens on demand.
+</ResponseField>
+
+---
+
+## GraphNoteMetaInput
+
+Input type for supplying optional metadata when creating or updating notes. Any field you omit is inferred automatically.
+
+```typescript
+export interface GraphNoteMetaInput {
+  subject?: string;
+  scope?: MemoryScope;
+  type?: MemoryType;
+  source?: MemorySource;
+  confidence?: number;
+  stability?: MemoryStability;
+}
+```
+
+<ParamField path="subject" type="string">
+  Override the inferred subject.
+</ParamField>
+
+<ParamField path="scope" type="MemoryScope">
+  Override the inferred scope.
+</ParamField>
+
+<ParamField path="type" type="MemoryType">
+  Override the inferred memory type.
+</ParamField>
+
+<ParamField path="source" type="MemorySource">
+  Override the inferred source.
+</ParamField>
+
+<ParamField path="confidence" type="number">
+  Override the inferred confidence. Clamped to `[0, 1]`.
+</ParamField>
+
+<ParamField path="stability" type="MemoryStability">
+  Override the inferred stability.
+</ParamField>
+
+```typescript
+nugget.remember("project:deploy-cmd", "pnpm deploy", {
+  source: "explicit_user",
+  stability: "durable",
+  confidence: 1.0,
+});
+```
+
+---
+
+## NoteFilterOptions
+
+Filter options accepted by `listNotes` and `searchNotes`.
+
+```typescript
+export interface NoteFilterOptions {
+  includeHidden?: boolean;
+  subject?: string;
+  scope?: MemoryScope;
+  type?: MemoryType;
+}
+```
+
+<ParamField path="includeHidden" type="boolean" default="false">
+  When `true`, soft-deleted (hidden) notes are included in the results.
+</ParamField>
+
+<ParamField path="subject" type="string">
+  Return only notes whose `subject` exactly matches this string.
+</ParamField>
+
+<ParamField path="scope" type="MemoryScope">
+  Return only notes with this scope.
+</ParamField>
+
+<ParamField path="type" type="MemoryType">
+  Return only notes of this type.
+</ParamField>
+
+```typescript
+// List all durable project notes including archived ones
+nugget.listNotes({
+  includeHidden: true,
+  scope: "project",
+  type: "note",
+});
+```
+
+---
+
+## SearchNotesResult
+
+A single result item returned by `searchNotes`.
+
+```typescript
+export interface SearchNotesResult {
+  note: MemoryNote;
+  score: number;
+  vectorScore: number;
+  textScore: number;
+}
+```
+
+<ResponseField name="note" type="MemoryNote" required>
+  The matching note.
+</ResponseField>
+
+<ResponseField name="score" type="number" required>
+  Combined relevance score after softmax re-ranking. Range `[0, 1]`. Results are sorted by this value descending.
+</ResponseField>
+
+<ResponseField name="vectorScore" type="number" required>
+  Cosine similarity contribution from the FHRR vector, normalised to `[0, 1]`. Weighted at 42% of the final score.
+</ResponseField>
+
+<ResponseField name="textScore" type="number" required>
+  Text overlap contribution. Based on exact phrase match and token overlap against title, content, tags, subject, scope, and type. Weighted at 48% of the final score.
+</ResponseField>

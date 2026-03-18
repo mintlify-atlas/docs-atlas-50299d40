@@ -1,0 +1,176 @@
+---
+title: "Proactive System"
+description: "How Nuggets initiates messages on your behalf — heartbeats, cron reminders, and daily memory reflection — and how to configure quiet hours."
+---
+
+The proactive system lets Nuggets reach out to you without waiting for a message. It runs three mechanisms automatically after startup: a heartbeat that checks in during inactivity, a cron scheduler for user-created reminders, and a daily memory reflection pass that keeps the note graph tidy.
+
+<CardGroup cols={3}>
+  <Card title="Heartbeat" icon="heart-pulse">
+    Fires every 30 minutes of inactivity. The agent checks memory and sends a message only if it has something worth saying.
+  </Card>
+  <Card title="Cron reminders" icon="clock">
+    User-created scheduled tasks evaluated every minute. Supports one-shot timers and repeating schedules.
+  </Card>
+  <Card title="Memory reflection" icon="brain">
+    A hidden daily job at 9:00 AM that rewrites, merges, and cleans the note graph autonomously.
+  </Card>
+</CardGroup>
+
+## Heartbeat
+
+The `HeartbeatManager` registers a per-conversation timer when the gateway first receives a message from a user. Every `HEARTBEAT_INTERVAL_MS` milliseconds (default 30 minutes), the timer fires and the gateway asks the agent to check its memory for anything worth surfacing.
+
+### What triggers a message vs. a skip
+
+When the heartbeat fires, the gateway checks three conditions before queuing a message:
+
+<Steps>
+  <Step title="Quiet hours check">
+    If the current server time falls within the quiet hours window (`QUIET_HOURS_START` to `QUIET_HOURS_END`), the heartbeat is silently skipped. No message is queued.
+  </Step>
+  <Step title="Recent activity check">
+    If the user sent a message less than half the heartbeat interval ago (by default, within the last 15 minutes), the heartbeat is skipped. This prevents a check-in immediately after an active conversation.
+  </Step>
+  <Step title="Memory reflection check">
+    If the daily memory reflection has not yet run today and the current time is at or past `MEMORY_REFLECTION_HOUR:MEMORY_REFLECTION_MINUTE`, the heartbeat slot is used to run a silent reflection pass instead of a check-in. The agent only sends a message if the cleanup surfaces something genuinely important.
+  </Step>
+</Steps>
+
+If all three checks pass, the gateway prompts the agent with:
+
+```text
+It's been a while since you last interacted with the user. Check your memory — is there anything
+you should follow up on, remind the user about, or proactively share? Consider:
+- Pending tasks or reminders
+- Things the user asked you to check on later
+- Useful information you've discovered since last time
+
+If there's something worth saying, write a natural message to the user. If there's truly nothing
+to follow up on, respond with exactly: NOTHING
+```
+
+If the agent replies with `NOTHING` (or an empty response), the gateway stays silent.
+
+### Heartbeat resets on activity
+
+Every time you send a message, the heartbeat timer resets. The interval always measures time since your last message, not time since the last heartbeat.
+
+<Warning>
+  If you run Nuggets connected to multiple channels (for example, both Telegram and WhatsApp), each channel registers its own heartbeat per conversation. You may receive duplicate check-ins if you have active sessions on more than one channel. Consider setting `HEARTBEAT_INTERVAL_MS` to a longer value or using only one channel.
+</Warning>
+
+## Cron reminders
+
+The `CronScheduler` evaluates all registered cron jobs once per minute. Jobs survive restarts — they are stored as JSON in `.gateway/cron/jobs.json`.
+
+### How users create reminders
+
+When you use the `pi` backend, the agent has access to the `schedule` tool from `.pi/extensions/proactive.ts`. You can ask the agent to set a reminder in plain language and it will create a cron job on your behalf.
+
+Examples:
+
+```text
+Remind me to check the deployment logs every weekday at 9 AM.
+Set a one-time reminder in 2 hours to review the pull request.
+Schedule a weekly check-in every Monday at 8 AM.
+```
+
+The `schedule` tool accepts standard five-field cron expressions:
+
+```text
+minute  hour  day-of-month  month  day-of-week
+  0       9        *          *        1-5      → weekdays at 9:00 AM
+  0      */2       *          *         *       → every 2 hours
+  30      8        *          *         1       → Mondays at 8:30 AM
+```
+
+Pass `one_shot=true` for a timer that fires once and is automatically removed.
+
+### Job storage
+
+Jobs are stored in `.gateway/cron/jobs.json`. The agent writes new schedule requests to `.gateway/cron/requests.jsonl`, and the scheduler picks them up within 5 seconds. You do not need to restart the gateway to activate a new reminder.
+
+### Job types
+
+| Event type | Description |
+|---|---|
+| `cron` | Repeating job. Fires whenever the cron expression matches the current time. |
+| `timer` | One-shot job (`oneShot: true`). Removed from the job list after it fires once. |
+| `maintenance` | Hidden system job for memory reflection. Does not appear in the job list. |
+
+## Daily memory reflection
+
+When the first user conversation is registered, the cron scheduler automatically installs a hidden daily job that runs `reflectAndCleanMemory()` at `MEMORY_REFLECTION_HOUR:MEMORY_REFLECTION_MINUTE` (default 9:00 AM).
+
+### What the reflection pass does
+
+The agent is prompted to inspect up to `MEMORY_REFLECTION_MAX_NOTES` notes (default 10) and:
+
+- Rewrite stale or low-quality notes
+- Merge near-duplicates
+- Improve tags and add missing links
+- Archive low-value entries
+
+The reflection job is marked `hidden: true` and does not appear when you list your scheduled reminders.
+
+### When it fires
+
+The cron scheduler fires the reflection job once per day at the configured hour and minute. If the cron scheduler misses the window (for example, if the gateway was restarted after 9:00 AM), the heartbeat provides a fallback: the next time the heartbeat fires after the reflection window has passed and before the reflection has run today, it runs a reflection pass instead of a regular check-in.
+
+<Note>
+  The reflection job sends you a message only if the cleanup surfaces something you genuinely need to know. In most cases it completes silently.
+</Note>
+
+## Quiet hours
+
+During quiet hours, no proactive messages are sent. The heartbeat timer still fires internally, but the gateway drops the event without queuing a message.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `QUIET_HOURS_START` | `22` | 10 PM server local time — quiet period begins |
+| `QUIET_HOURS_END` | `8` | 8 AM server local time — quiet period ends |
+
+Quiet hours support overnight ranges. Because the default `QUIET_HOURS_START` (22) is greater than `QUIET_HOURS_END` (8), the gateway treats hours from 10 PM through 7:59 AM as quiet:
+
+```typescript
+// Overnight range: start > end
+hour >= QUIET_HOURS_START || hour < QUIET_HOURS_END
+// e.g. hour=23 → true (quiet), hour=7 → true (quiet), hour=9 → false (active)
+
+// Same-day range: start < end
+hour >= QUIET_HOURS_START && hour < QUIET_HOURS_END
+// e.g. QUIET_HOURS_START=9, QUIET_HOURS_END=17 → quiet from 9 AM to 4:59 PM
+```
+
+To disable quiet hours entirely, set either variable to `-1`.
+
+### Configuring quiet hours for your timezone
+
+Quiet hours use the server's local time — the timezone of the machine running the gateway. If your server runs in UTC and you want quiet hours in your local timezone, offset the values accordingly.
+
+<Tip>
+  If your server is in UTC and you are in UTC-5 (Eastern Standard Time), a 10 PM–8 AM local quiet window corresponds to `QUIET_HOURS_START=3` and `QUIET_HOURS_END=13` on the server.
+</Tip>
+
+For a setup where the server and your local timezone match, the defaults work as-is.
+
+## Configuration reference
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `HEARTBEAT_INTERVAL_MS` | `number` | `1800000` (30 min) | Milliseconds between heartbeat checks per conversation. Set to `0` to disable. |
+| `QUIET_HOURS_START` | `number` | `22` | Hour (0–23) at which quiet hours begin. Set to `-1` to disable quiet hours. |
+| `QUIET_HOURS_END` | `number` | `8` | Hour (0–23) at which quiet hours end. |
+| `CRON_EVAL_INTERVAL_MS` | `number` | `60000` (1 min) | Milliseconds between cron expression evaluations. |
+| `MEMORY_REFLECTION_HOUR` | `number` | `9` | Hour (0–23) at which the daily reflection job runs. |
+| `MEMORY_REFLECTION_MINUTE` | `number` | `0` | Minute (0–59) at which the daily reflection job runs. |
+| `MEMORY_REFLECTION_MAX_NOTES` | `number` | `10` | Maximum notes inspected per reflection pass. |
+
+```bash
+# .env — proactive system defaults
+HEARTBEAT_INTERVAL_MS=1800000
+QUIET_HOURS_START=22
+QUIET_HOURS_END=8
+CRON_EVAL_INTERVAL_MS=60000
+```

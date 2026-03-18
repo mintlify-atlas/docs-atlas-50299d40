@@ -1,0 +1,150 @@
+---
+title: "Pi Backend"
+description: "Run Nuggets with Pi — a local AI agent with native tool use, persistent sessions, and first-class memory integration."
+---
+
+The Pi backend connects Nuggets to [Pi](https://github.com/mariozechner/pi), an open-source local AI agent that communicates over JSONL on stdin/stdout. Pi runs as a persistent subprocess per conversation, resuming its session across restarts and accepting follow-up messages without losing context.
+
+The Pi backend is the default and provides the deepest Nuggets integration: native memory tools, graph note management, scheduling, and memory reflection are all available as structured tool calls.
+
+## Configuration
+
+```bash
+# .env
+AGENT_BACKEND=pi
+AGENT_PROVIDER=anthropic   # anthropic | openai | openai-codex
+AGENT_MODEL=               # Leave empty for the provider default
+```
+
+### Provider credentials
+
+The Pi backend authenticates using a provider API key or Pi's stored OAuth login.
+
+```bash
+# Anthropic (default provider)
+ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+```
+
+If you set `AGENT_PROVIDER=openai` but have no `OPENAI_API_KEY` and no stored OpenAI login, Pi automatically checks for a stored `openai-codex` OAuth credential and remaps the provider to `openai-codex`. You can also run `pi` interactively and use `/login` to authenticate through the Pi UI.
+
+## Memory tools
+
+The Pi backend loads two extensions from `.pi/extensions/`: `nuggets.ts` and `proactive.ts`. These register the following tools:
+
+### `nuggets.ts` tools
+
+| Tool | Description |
+|---|---|
+| `nuggets` | Persistent memory tool. Actions: `remember`, `recall`, `forget`, `list`. Stores and retrieves FHRR-backed facts across sessions. |
+| `createNote` | Creates a rich note in the Nuggets graph with title, content, tags, scope, and stability. |
+| `addLink` | Creates a bidirectional link between two existing notes with a descriptive reason. |
+| `editNote` | Rewrites the content, title, or tags of an existing graph note by ID. |
+| `searchNotes` | Searches the Zettelkasten memory graph using text overlap and FHRR similarity. |
+
+The `nuggets` extension also injects existing facts and top-ranked notes into the system prompt before each agent turn, so the agent starts with relevant context automatically.
+
+### `proactive.ts` tools
+
+| Tool | Description |
+|---|---|
+| `schedule` | Creates, deletes, or lists cron-based schedules. Use `one_shot=true` for one-time reminders. Cron format: `minute hour day-of-month month day-of-week`. |
+| `reflectAndCleanMemory` | Runs a safe maintenance pass over the note graph: rewrites stale notes, merges near-duplicates, improves tags and links, archives low-value entries. Inspects at most `limit` notes (default 10). |
+
+## Session pool
+
+The gateway maintains one Pi subprocess per active conversation. You can tune the pool with two environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAX_PI_PROCESSES` | `5` | Maximum number of simultaneous Pi subprocesses. When the pool is full, the least-recently-active session is evicted. |
+| `PI_IDLE_TIMEOUT_MS` | `300000` (5 min) | Time in milliseconds after the last message before an idle Pi process is stopped. The session file is preserved so the next message resumes where you left off. |
+
+```bash
+# .env
+MAX_PI_PROCESSES=5
+PI_IDLE_TIMEOUT_MS=300000
+```
+
+<Note>
+  Pi resumes an existing session automatically when the provider and model match the previous session. If you change `AGENT_PROVIDER` or `AGENT_MODEL`, Pi starts a fresh session rather than continuing an incompatible one.
+</Note>
+
+## Skills
+
+### How skills are loaded
+
+When the gateway starts, it discovers skills in this priority order:
+
+<Steps>
+  <Step title="AGENT_SKILL_PATHS">
+    Any paths listed in `AGENT_SKILL_PATHS` are loaded first. Separate multiple entries with commas or newlines.
+
+    ```bash
+    AGENT_SKILL_PATHS=/abs/path/to/skill-dir,/another/skill.md
+    ```
+  </Step>
+  <Step title="Registry skills (skills/)">
+    Nuggets looks for a `skills/` directory in the project root. Each subdirectory can contain a `skill.json` metadata file and a `SKILL.md` instructions file.
+  </Step>
+  <Step title="Pi-style fallback skills (.pi/skills/)">
+    For compatibility with plain Pi skill directories, Nuggets also loads any skills found in `.pi/skills/`. These are treated as simple markdown skills with no `skill.json` metadata.
+  </Step>
+</Steps>
+
+Name collisions are resolved in the order above — the first skill with a given name wins. Duplicate real paths are silently skipped.
+
+### How Pi receives skills
+
+Each enabled skill is passed to the Pi subprocess as a `--skill <path>` argument. Pi reads the `SKILL.md` file directly and includes the instructions in its context. Skills with `adapters.pi.enabled` set to `false` in their `skill.json` are excluded.
+
+### Skill management in chat
+
+You can manage sticky skills directly in your conversation:
+
+| Command | Effect |
+|---|---|
+| `/skills` or `/skill list` | Lists all available skills with their scope and active status. |
+| `/skill use <name>` | Activates a skill for this conversation (sticky scope). |
+| `/skill remove <name>` | Deactivates a skill for this conversation. |
+| `/skill clear` | Removes all sticky skills from this conversation. |
+
+Skills with `scope: sticky` in their `skill.json` automatically activate when the message text matches a configured trigger word. One-shot skills activate for a single message and then deactivate.
+
+### SKILL.md format
+
+A Pi-compatible skill file uses YAML frontmatter for metadata and a markdown body for instructions:
+
+```markdown
+---
+name: reviewer
+description: Code review assistant that checks for correctness, style, and edge cases.
+---
+
+You are a careful code reviewer. When reviewing code:
+- Check for logic errors and edge cases
+- Flag inconsistent style
+- Suggest specific improvements rather than vague feedback
+```
+
+Registry skills also include a `skill.json` alongside the `SKILL.md`:
+
+```json
+{
+  "name": "reviewer",
+  "description": "Code review assistant that checks for correctness, style, and edge cases.",
+  "scope": "sticky",
+  "triggers": ["review", "check this"],
+  "adapters": {
+    "pi": { "enabled": true },
+    "codex": { "enabled": true },
+    "local": { "enabled": false }
+  }
+}
+```
+
+<Tip>
+  Keep `SKILL.md` frontmatter in sync with `skill.json`. Pi reads the frontmatter directly when loading skills, and a mismatch generates a warning at startup.
+</Tip>

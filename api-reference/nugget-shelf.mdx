@@ -1,0 +1,465 @@
+---
+title: "NuggetShelf"
+description: "A multi-nugget manager. NuggetShelf holds a collection of named Nugget instances and exposes a unified API for cross-nugget recall, note search, and memory maintenance."
+---
+
+`NuggetShelf` is the recommended entry point when your application works with more than one nugget. It owns the nugget lifecycle (create, load, remove) and fans out recall and search queries across all managed nuggets automatically.
+
+## Constructor
+
+```typescript
+new NuggetShelf(opts?: {
+  saveDir?: string;
+  autoSave?: boolean;
+})
+```
+
+<ParamField path="opts.saveDir" type="string" default="~/.nuggets">
+  Directory where nugget files and the graph are stored. All nuggets created by this shelf share the same `saveDir`.
+</ParamField>
+
+<ParamField path="opts.autoSave" type="boolean" default="true">
+  Passed through to every nugget created or loaded by this shelf.
+</ParamField>
+
+```typescript
+import { NuggetShelf } from "nuggets";
+
+const shelf = new NuggetShelf({ saveDir: "~/.nuggets" });
+shelf.loadAll(); // restore any previously saved nuggets
+```
+
+---
+
+## Properties
+
+<ResponseField name="saveDir" type="string">
+  The directory used for all nugget files on this shelf. Read-only.
+</ResponseField>
+
+<ResponseField name="autoSave" type="boolean">
+  Whether auto-save is enabled for all nuggets. Read-only.
+</ResponseField>
+
+<ResponseField name="size" type="number">
+  The number of nuggets currently held on the shelf.
+</ResponseField>
+
+---
+
+## Nugget lifecycle
+
+### create
+
+```typescript
+create(
+  name: string,
+  opts?: { D?: number; banks?: number; ensembles?: number },
+): Nugget
+```
+
+Creates a new `Nugget` and registers it on the shelf. Throws if a nugget with that name already exists.
+
+<ParamField path="name" type="string" required>
+  Unique name for the nugget.
+</ParamField>
+
+<ParamField path="opts.D" type="number" default="16384">
+  FHRR vector dimensionality.
+</ParamField>
+
+<ParamField path="opts.banks" type="number" default="4">
+  Number of memory banks.
+</ParamField>
+
+<ParamField path="opts.ensembles" type="number" default="1">
+  Number of ensemble copies.
+</ParamField>
+
+Returns the new [`Nugget`](/api-reference/nugget-class) instance.
+
+```typescript
+const prefs = shelf.create("prefs");
+prefs.remember("user:theme", "dark");
+```
+
+---
+
+### get
+
+```typescript
+get(name: string): Nugget
+```
+
+Retrieves a registered nugget by name. Throws if the nugget does not exist.
+
+<ParamField path="name" type="string" required>
+  Name of the nugget to retrieve.
+</ParamField>
+
+```typescript
+const prefs = shelf.get("prefs");
+console.log(prefs.facts());
+```
+
+---
+
+### getOrCreate
+
+```typescript
+getOrCreate(name: string): Nugget
+```
+
+Returns the nugget with the given name if it already exists, or creates a new one with default options.
+
+<ParamField path="name" type="string" required>
+  Name of the nugget to retrieve or create.
+</ParamField>
+
+```typescript
+const locations = shelf.getOrCreate("locations");
+locations.remember("shared:auth-handler", "src/auth/middleware.ts:47");
+```
+
+---
+
+### has
+
+```typescript
+has(name: string): boolean
+```
+
+Returns `true` if a nugget with the given name is registered on the shelf.
+
+```typescript
+if (!shelf.has("debug")) {
+  shelf.create("debug");
+}
+```
+
+---
+
+### remove
+
+```typescript
+remove(name: string): void
+```
+
+Unregisters a nugget, deletes its `.nugget.json` file, and removes all of its graph notes. Throws if the nugget does not exist.
+
+<Warning>
+  `remove()` permanently deletes the nugget file and all associated notes. This cannot be undone.
+</Warning>
+
+<ParamField path="name" type="string" required>
+  Name of the nugget to remove.
+</ParamField>
+
+```typescript
+shelf.remove("debug");
+```
+
+---
+
+### list
+
+```typescript
+list(): Array<ReturnType<Nugget["status"]>>
+```
+
+Returns the [`status()`](/api-reference/nugget-class#status) object for every registered nugget.
+
+```typescript
+for (const info of shelf.list()) {
+  console.log(`${info.name}: ${info.fact_count} facts, ${info.note_count} notes`);
+}
+```
+
+---
+
+### loadAll
+
+```typescript
+loadAll(): void
+```
+
+Scans `saveDir` for `*.nugget.json` files and loads each one into the shelf. Files that cannot be parsed are silently skipped. Call this once at startup to restore a previous session.
+
+```typescript
+const shelf = new NuggetShelf();
+shelf.loadAll();
+console.log(shelf.size); // number of nuggets restored
+```
+
+---
+
+### saveAll
+
+```typescript
+saveAll(): void
+```
+
+Calls [`save()`](/api-reference/nugget-class#save) on every registered nugget. Useful when `autoSave` is disabled and you want a single explicit flush.
+
+```typescript
+const shelf = new NuggetShelf({ autoSave: false });
+// ... batch operations ...
+shelf.saveAll();
+```
+
+---
+
+## Fact methods
+
+### remember
+
+```typescript
+remember(
+  nuggetName: string,
+  key: string,
+  value: string,
+  noteMeta?: GraphNoteMetaInput,
+): void
+```
+
+Stores or updates a fact in the named nugget, creating the nugget first if it does not exist.
+
+<ParamField path="nuggetName" type="string" required>
+  Target nugget name.
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Fact key.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  Fact value.
+</ParamField>
+
+<ParamField path="noteMeta" type="GraphNoteMetaInput">
+  Optional metadata for the mirrored graph note.
+</ParamField>
+
+```typescript
+shelf.remember("project", "shared:test-cmd", "pnpm test");
+```
+
+---
+
+### recall
+
+```typescript
+recall(
+  query: string,
+  nuggetName?: string,
+  sessionId?: string,
+): ReturnType<Nugget["recall"]> & { nugget_name: string | null }
+```
+
+Searches for a fact matching the query. When `nuggetName` is provided, the search is scoped to that nugget. Otherwise, every nugget is queried and the result with the highest confidence is returned.
+
+<ParamField path="query" type="string" required>
+  Query string passed to each nugget's `recall`.
+</ParamField>
+
+<ParamField path="nuggetName" type="string">
+  Restrict the search to this nugget. Throws if the nugget does not exist.
+</ParamField>
+
+<ParamField path="sessionId" type="string" default='""'>
+  Session identifier for hit tracking.
+</ParamField>
+
+**Returns** the standard [recall result](/api-reference/nugget-class#recall) plus:
+
+<ResponseField name="nugget_name" type="string | null">
+  Name of the nugget that produced the winning result, or `null` if nothing was found.
+</ResponseField>
+
+```typescript
+// Search all nuggets
+const result = shelf.recall("test command");
+console.log(result.answer, result.nugget_name);
+
+// Search one nugget
+const result2 = shelf.recall("test-cmd", "project");
+```
+
+---
+
+### forget
+
+```typescript
+forget(nuggetName: string, key: string): boolean
+```
+
+Removes a fact from the named nugget. Throws if the nugget does not exist.
+
+<ParamField path="nuggetName" type="string" required>
+  Target nugget name.
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Key to remove.
+</ParamField>
+
+Returns `true` if the fact was removed, `false` if not found.
+
+```typescript
+shelf.forget("project", "shared:test-cmd");
+```
+
+---
+
+## Note methods
+
+### createNote
+
+```typescript
+createNote(
+  nuggetName: string,
+  title: string,
+  content: string,
+  tags?: string[],
+  meta?: GraphNoteMetaInput,
+): MemoryNote
+```
+
+Creates a note in the named nugget, creating the nugget first if it does not exist.
+
+```typescript
+shelf.createNote("project", "Deploy checklist", "Run pnpm build, then push.", ["deploy"]);
+```
+
+---
+
+### editNote
+
+```typescript
+editNote(
+  nuggetName: string,
+  noteId: string,
+  newContent: string,
+  updates?: {
+    tags?: string[];
+    title?: string;
+    hidden?: boolean;
+    rewrittenAt?: string;
+    noteMeta?: GraphNoteMetaInput;
+  },
+): MemoryNote | null
+```
+
+Edits a note in the named nugget. Delegates to [`Nugget.editNote`](/api-reference/nugget-class#editnote).
+
+```typescript
+shelf.editNote("project", "note-project-a1b2c3d4", "Updated deploy steps.");
+```
+
+---
+
+### addLink
+
+```typescript
+addLink(
+  nuggetName: string,
+  note1: string,
+  note2: string,
+  reason: string,
+): boolean
+```
+
+Adds a bidirectional link between two notes in the named nugget.
+
+```typescript
+shelf.addLink("project", "Deploy checklist", "CORS fix", "both affect production");
+```
+
+---
+
+### searchNotes
+
+```typescript
+searchNotes(
+  query: string,
+  nuggetName?: string,
+  limit?: number,
+  opts?: NoteFilterOptions,
+): Array<SearchNotesResult & { nugget_name: string }>
+```
+
+Searches notes across all nuggets (or a single named nugget). Results from all nuggets are merged and re-ranked by score before the `limit` is applied.
+
+<ParamField path="query" type="string" required>
+  Free-text search query.
+</ParamField>
+
+<ParamField path="nuggetName" type="string">
+  Restrict the search to this nugget.
+</ParamField>
+
+<ParamField path="limit" type="number" default="5">
+  Maximum number of results.
+</ParamField>
+
+<ParamField path="opts" type="NoteFilterOptions">
+  Optional filters.
+</ParamField>
+
+Returns an array of [`SearchNotesResult`](/api-reference/graph-notes#searchnotesresult) items each augmented with `nugget_name: string`.
+
+```typescript
+const results = shelf.searchNotes("CORS");
+for (const { note, score, nugget_name } of results) {
+  console.log(`[${nugget_name}] ${note.title} (${score.toFixed(3)})`);
+}
+```
+
+---
+
+### listNotes
+
+```typescript
+listNotes(
+  nuggetName?: string,
+  opts?: NoteFilterOptions,
+): Array<MemoryNote & { nugget_name: string }>
+```
+
+Lists notes across all nuggets (or a single named nugget). Each item includes a `nugget_name` field.
+
+```typescript
+// All notes on the shelf
+const all = shelf.listNotes();
+
+// Notes from a specific nugget
+const projectNotes = shelf.listNotes("project");
+```
+
+---
+
+### reflectAndCleanMemory
+
+```typescript
+reflectAndCleanMemory(
+  nuggetName?: string,
+  limit?: number,
+): ReflectionResult
+```
+
+Runs a synchronous reflection pass on the shelf. Stale notes are rewritten, near-duplicates are merged, tags are improved, and low-value notes are archived. See [`reflectAndCleanMemory`](/api-reference/rewrite#reflectandcleanmemory) for full details.
+
+<ParamField path="nuggetName" type="string">
+  Restrict the pass to this nugget. Omit to process all nuggets.
+</ParamField>
+
+<ParamField path="limit" type="number" default="10">
+  Maximum number of notes to inspect. Capped at `10`.
+</ParamField>
+
+Returns a [`ReflectionResult`](/api-reference/rewrite#reflectionresult).
+
+```typescript
+const result = shelf.reflectAndCleanMemory();
+console.log(`Inspected ${result.inspected}, merged ${result.merged}, tagged ${result.tagged}`);
+```

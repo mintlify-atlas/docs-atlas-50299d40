@@ -1,0 +1,210 @@
+---
+title: "Custom Skills"
+description: "How to create your own skills, configure skill.json, write SKILL.md instructions, and load skills from external directories."
+---
+
+You can add your own skills to Nuggets by creating a new directory in the `skills/` registry. Custom skills work exactly like built-in skills — they are loaded at startup, delivered to the model via the same per-backend mechanisms, and managed with the same slash commands.
+
+## Creating a skill
+
+<Steps>
+  <Step title="Create the skill directory">
+    Add a new directory under `skills/` using a lowercase, hyphenated identifier. The directory name is used as the fallback skill name if `skill.json` does not specify one.
+
+    ```bash
+    mkdir skills/summarizer
+    ```
+  </Step>
+
+  <Step title="Create skill.json">
+    Create `skills/summarizer/skill.json` with your skill's metadata:
+
+    ```json
+    {
+      "name": "summarizer",
+      "description": "Summarize long outputs, files, or conversations into a structured brief.",
+      "scope": "one-shot",
+      "triggers": [
+        "summarize",
+        "give me a summary",
+        "tldr",
+        "condense this"
+      ],
+      "requires": [
+        "files"
+      ],
+      "adapters": {
+        "pi": {
+          "enabled": true,
+          "extraPrompt": "Use headers to separate sections in the summary."
+        },
+        "codex": {
+          "enabled": true,
+          "extraPrompt": "Reference file paths when summarizing code."
+        },
+        "local": {
+          "enabled": true
+        }
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Create SKILL.md">
+    Create `skills/summarizer/SKILL.md` with the instructions the model will read. Include YAML frontmatter with `name` and `description` matching `skill.json` exactly — Pi reads the frontmatter directly.
+
+    ````markdown
+    ---
+    name: summarizer
+    description: Summarize long outputs, files, or conversations into a structured brief.
+    ---
+
+    # Summarizer
+
+    Use this skill when the user asks for a summary, TL;DR, or condensed version of something.
+
+    ## Approach
+
+    1. Identify the main topic or purpose.
+    2. Extract the three to five most important points.
+    3. Note any action items, decisions, or open questions.
+    4. Keep the brief under one page unless the user asks for more.
+
+    ## Output style
+
+    - Use a short intro sentence, then bullet points.
+    - Group related points under headers if the content is long.
+    - Avoid repeating the source material verbatim.
+    ````
+  </Step>
+
+  <Step title="Restart the gateway">
+    Skills are loaded at startup. Restart the gateway to pick up your new skill:
+
+    ```bash
+    npm run dev
+    ```
+
+    Verify it loaded by sending `/skills` in chat. You should see `summarizer` in the list.
+  </Step>
+</Steps>
+
+## skill.json schema
+
+All fields and their behavior:
+
+```json
+{
+  "name": "summarizer",
+  "description": "Short description shown in the skills list and in the catalog prompt.",
+  "scope": "one-shot",
+  "triggers": [],
+  "requires": [],
+  "disableModelInvocation": false,
+  "adapters": {
+    "pi": {},
+    "codex": {},
+    "local": {}
+  }
+}
+```
+
+### Field reference
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Lowercase letters, numbers, and hyphens only. Must be unique across all loaded skills. |
+| `description` | string | Yes | One-sentence description. Shown in `/skills` output and in the Codex catalog prompt. |
+| `scope` | `"one-shot"` \| `"sticky"` | No | Defaults to `"one-shot"`. Use `"sticky"` to keep the skill active for the whole conversation after it triggers. |
+| `triggers` | string[] | No | Phrases that auto-activate the skill. Matching is case-insensitive and substring-based. |
+| `requires` | string[] | No | Informational tags listing what capabilities the skill needs (e.g. `"files"`, `"shell"`, `"memory"`). Not enforced at runtime. |
+| `disableModelInvocation` | boolean | No | Set to `true` to hide the skill from the model entirely. The skill is loaded but never included in prompts or catalogs. |
+| `adapters` | object | No | Per-backend configuration. Each key is `"pi"`, `"codex"`, or `"local"`. |
+| `adapters.<backend>.enabled` | boolean | No | Set to `false` to exclude this skill for that specific backend. Defaults to `true`. |
+| `adapters.<backend>.extraPrompt` | string | No | Additional instruction appended to the skill's inline prompt for that backend. Use it to handle backend-specific limitations. |
+
+### Scope behavior
+
+- **`one-shot`**: the skill is included for the single request that matched its trigger. It does not persist to the next message.
+- **`sticky`**: the skill is saved to the conversation's `active-skills.json` state file on first trigger and remains active until you run `/skill remove <name>` or `/skill clear`.
+
+<Warning>
+  Skill names must match the regex `^[a-z0-9-]+$`. Any skill with an invalid name is skipped at load time with a warning in the logs.
+</Warning>
+
+## SKILL.md format
+
+The `SKILL.md` file has two parts: YAML frontmatter and a markdown body.
+
+```markdown
+---
+name: your-skill-id
+description: One sentence matching skill.json exactly.
+---
+
+# Skill title
+
+When to use this skill and what problem it solves.
+
+## Section heading
+
+Content...
+```
+
+**Frontmatter rules:**
+- `name` and `description` must match `skill.json` exactly — Pi reads the frontmatter directly and logs a warning if they diverge.
+- Both fields are required for Pi compatibility.
+
+**Body tips:**
+- Open with one sentence on when to use the skill.
+- Use numbered steps for workflows that have a fixed order.
+- Use bullet lists for principles or guardrails without a strict order.
+- Keep the instructions actionable — tell the model what to do, not just what the skill is.
+- Reference relative paths (e.g. to config files or example directories) when useful. The gateway resolves relative paths against the skill's directory.
+
+## Backend compatibility notes
+
+<AccordionGroup>
+  <Accordion title="Pi">
+    Pi receives `SKILL.md` as a native Pi skill file. The frontmatter `name` and `description` are read directly by Pi. Use `adapters.pi.extraPrompt` for any Pi-specific instruction that does not belong in the shared skill body.
+  </Accordion>
+  <Accordion title="Codex">
+    Codex receives a catalog listing all available skills, then reads `SKILL.md` on demand when a skill is relevant. This means the full instruction body is only loaded when needed. Use `adapters.codex.extraPrompt` to add a short Codex-specific note without duplicating it in `SKILL.md`.
+  </Accordion>
+  <Accordion title="Local">
+    The local backend inlines the full skill contents into the system prompt for every request where the skill is active. Keep `SKILL.md` concise for local skills to avoid bloating the prompt. If a skill is not useful for conversational-only models, set `adapters.local.enabled` to `false`.
+  </Accordion>
+</AccordionGroup>
+
+## Loading skills from external directories
+
+If you maintain skills outside the project (shared across multiple Nuggets instances, or in a private repo), point `AGENT_SKILL_PATHS` at those directories:
+
+```bash
+# .env
+AGENT_SKILL_PATHS=/home/you/shared-skills,~/team-skills
+```
+
+Each path can be:
+- An absolute path: `/home/you/shared-skills`
+- A home-relative path: `~/team-skills`
+- A path relative to the project root
+
+You can point a path at a single skill directory (containing `skill.json`), a parent directory of multiple skill directories, or an individual `.md` file for a simple markdown-only skill.
+
+<Info>
+  When two skills share the same name, the one loaded first wins. Skills from `AGENT_SKILL_PATHS` are loaded before the built-in registry, so an external skill can override a built-in one by name.
+</Info>
+
+## Activating and managing your skill
+
+Once the gateway restarts with your skill in place, use slash commands to manage it:
+
+```
+/skills                      Confirm the skill appears in the list
+/skill use summarizer        Activate it for the current conversation
+/skill remove summarizer     Deactivate it
+/skill clear                 Remove all sticky skills
+```
+
+Skills with triggers activate automatically when any trigger phrase appears in your message. You do not need to use `/skill use` for trigger-based activation unless you want to force the skill on before a trigger fires.

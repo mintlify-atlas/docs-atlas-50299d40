@@ -1,0 +1,201 @@
+---
+title: "CLI Commands"
+description: "Command-line interface for the Nuggets memory system. Use these commands to store, retrieve, and manage facts from any shell or agent script."
+---
+
+The `nuggets` CLI is the fastest way to interact with the memory system from scripts, CI pipelines, and AI agent hooks.
+
+<Tip>
+  Follow the recall-first pattern: check memory before doing an expensive search, then save what you find.
+</Tip>
+
+---
+
+## nuggets remember
+
+```bash
+nuggets remember <nugget> <key> <value>
+```
+
+Stores or updates a fact in the named nugget. If the nugget does not exist it is created automatically. If a fact with the same key already exists, its value is overwritten.
+
+**Arguments**
+
+<ParamField path="nugget" type="string" required>
+  Name of the target nugget.
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Lookup key for the fact. Use a scoped prefix (`user:`, `self:`, `shared:`, `project:`, `session:`) to set the memory scope explicitly. Without a prefix, the scope is inferred automatically.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  Value to store. Quote multi-word values.
+</ParamField>
+
+```bash
+# Store a file location
+nuggets remember locations "shared:auth-handler" "src/auth/middleware.ts:47"
+
+# Store a command
+nuggets remember project "shared:test-cmd" "pnpm test"
+
+# Store a user preference
+nuggets remember prefs "user:indent" "2 spaces, no semicolons"
+
+# Store a bug fix note
+nuggets remember debug "shared:cors-error" "add origin to allowlist in config.ts"
+```
+
+---
+
+## nuggets recall
+
+```bash
+nuggets recall <query> [--nugget <name>]
+```
+
+Searches memory for a fact matching the query. Without `--nugget`, all nuggets are searched and the result with the highest confidence is returned.
+
+**Arguments**
+
+<ParamField path="query" type="string" required>
+  Query string. The engine tries exact match, substring containment, then fuzzy sequence matching.
+</ParamField>
+
+**Flags**
+
+<ParamField path="--nugget" type="string">
+  Restrict the search to a single named nugget.
+</ParamField>
+
+**Output format**
+
+```
+Found: shared:auth-handler
+Value: src/auth/middleware.ts:47
+Confidence: 0.97  Margin: 0.43
+Nugget: locations
+```
+
+When nothing is found:
+
+```
+Not found.
+```
+
+```bash
+# Search all nuggets
+nuggets recall "auth handler"
+
+# Search a specific nugget
+nuggets recall "test command" --nugget project
+```
+
+---
+
+## nuggets forget
+
+```bash
+nuggets forget <nugget> <key>
+```
+
+Removes a fact from the named nugget and deletes its associated graph note.
+
+**Arguments**
+
+<ParamField path="nugget" type="string" required>
+  Name of the nugget to modify.
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Key of the fact to remove. The match is case-insensitive.
+</ParamField>
+
+```bash
+nuggets forget debug "shared:cors-error"
+```
+
+---
+
+## nuggets list
+
+```bash
+nuggets list
+```
+
+Lists all nuggets in the default save directory (`~/.nuggets`) with a summary of each.
+
+**Output format**
+
+```
+Nugget: locations
+  Facts: 12  Notes: 14  Capacity: 3.2%
+
+Nugget: project
+  Facts: 8  Notes: 10  Capacity: 2.1%
+
+Nugget: prefs
+  Facts: 5  Notes: 5  Capacity: 1.3%
+```
+
+```bash
+nuggets list
+```
+
+---
+
+## nuggets facts
+
+```bash
+nuggets facts <nugget>
+```
+
+Lists all facts stored in the named nugget.
+
+**Arguments**
+
+<ParamField path="nugget" type="string" required>
+  Name of the nugget to inspect.
+</ParamField>
+
+**Output format**
+
+```
+Nugget: project  (8 facts)
+
+  shared:test-cmd        pnpm test
+  shared:auth-handler    src/auth/middleware.ts:47
+  user:indent            2 spaces, no semicolons
+```
+
+```bash
+nuggets facts project
+```
+
+---
+
+## Recall-first workflow
+
+The recommended agent pattern:
+
+<Steps>
+  <Step title="Ask memory first">
+    ```bash
+    nuggets recall "what you need"
+    ```
+    Use the result directly if confidence is high enough.
+  </Step>
+  <Step title="Do the expensive work if needed">
+    Search files, call APIs, or run tools only when memory doesn't have a good answer.
+  </Step>
+  <Step title="Save what you discover">
+    ```bash
+    nuggets remember <nugget> "<key>" "<value>"
+    ```
+    Short, one-line facts go here.
+  </Step>
+  <Step title="Use the graph layer for richer context">
+    When the information is longer than one line or should link to other notes, use the programmatic API to call `createNote` and `addLink` instead.
+  </Step>
+</Steps>

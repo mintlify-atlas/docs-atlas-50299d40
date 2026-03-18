@@ -1,0 +1,225 @@
+---
+title: "Rewrite & Promote"
+description: "Autonomous memory maintenance. reflectAndCleanMemory rewrites stale notes, merges near-duplicates, improves tags, and archives low-value content. promoteFacts writes high-recall facts to MEMORY.md."
+---
+
+The rewrite and promote functions run as a daily background pass to keep memory healthy. You can also call them manually at any point.
+
+---
+
+## reflectAndCleanMemory
+
+```typescript
+import { reflectAndCleanMemory } from "nuggets";
+
+reflectAndCleanMemory(
+  shelf: NuggetShelf,
+  opts?: { nuggetName?: string; limit?: number },
+): ReflectionResult
+```
+
+Runs a synchronous reflection pass over a [`NuggetShelf`](/api-reference/nugget-shelf). The pass performs four sequential operations:
+
+<Steps>
+  <Step title="Archive low-value notes">
+    Notes with empty content, very short content with zero hits, or titles matching `tmp`/`temp`/`scratch` patterns are soft-deleted.
+  </Step>
+  <Step title="Normalize content">
+    Duplicate lines and excess whitespace are removed. The `lastRewrittenAt` timestamp is updated.
+  </Step>
+  <Step title="Improve tags">
+    Tags are re-derived from the title, content, scope, and type. System tags (`scope:*`, `type:*`) are added where missing.
+  </Step>
+  <Step title="Link related notes">
+    Notes that share two or more non-trivial tokens and belong to compatible subjects are linked automatically.
+  </Step>
+</Steps>
+
+Near-duplicate notes (Jaccard similarity ≥ 0.9 across the same subject, scope, and type) are merged: the longer note absorbs the shorter one's content, tags, and links.
+
+<ParamField path="shelf" type="NuggetShelf" required>
+  The shelf to operate on.
+</ParamField>
+
+<ParamField path="opts.nuggetName" type="string">
+  Restrict the pass to a single nugget. Omit to process all nuggets.
+</ParamField>
+
+<ParamField path="opts.limit" type="number" default="10">
+  Maximum number of notes to inspect per run. Capped internally at `10`.
+</ParamField>
+
+**Returns** a [`ReflectionResult`](#reflectionresult).
+
+```typescript
+import { NuggetShelf, reflectAndCleanMemory } from "nuggets";
+
+const shelf = new NuggetShelf();
+shelf.loadAll();
+
+const result = reflectAndCleanMemory(shelf);
+console.log(`Ran at ${result.ranAt}`);
+console.log(`Inspected: ${result.inspected}`);
+console.log(`Rewritten: ${result.rewritten}`);
+console.log(`Merged:    ${result.merged}`);
+console.log(`Tagged:    ${result.tagged}`);
+console.log(`Linked:    ${result.linked}`);
+console.log(`Archived:  ${result.hidden}`);
+
+for (const change of result.changes) {
+  console.log(`[${change.type}] ${change.nuggetName}/${change.noteId}: ${change.detail}`);
+}
+```
+
+<Note>
+  `reflectAndCleanMemory` is also exposed on `NuggetShelf` directly as [`shelf.reflectAndCleanMemory(nuggetName?, limit?)`](/api-reference/nugget-shelf#reflectandcleanmemory).
+</Note>
+
+---
+
+## promoteFacts
+
+```typescript
+import { promoteFacts } from "nuggets";
+
+promoteFacts(shelf: NuggetShelf): number
+```
+
+Scans all notes on the shelf for entries with `hits >= 3` (recalled across at least 3 distinct sessions) and writes them to `MEMORY.md` in the Claude project memory directory (`~/.claude/projects/<cwd>/memory/MEMORY.md`).
+
+If the memory directory does not exist, the function returns `0` without writing anything. The file is only created or updated when the directory already exists, making this safe to call in any environment.
+
+The generated `MEMORY.md` is structured as:
+
+```markdown
+# Memory
+
+Auto-promoted from nuggets graph notes (3+ recalls across sessions).
+
+## preferences
+
+- **user:theme**: dark
+
+## shared-context
+
+- **shared:test-command**: pnpm test
+```
+
+Sections are ordered with `learnings` and `preferences` first, then remaining sections alphabetically. Within each section, entries are keyed by note title and valued by note content.
+
+<ParamField path="shelf" type="NuggetShelf" required>
+  The shelf to read notes from.
+</ParamField>
+
+Returns the number of **new** entries added to `MEMORY.md` in this call. Updates to existing entries are applied silently and do not increment the count.
+
+```typescript
+import { NuggetShelf, promoteFacts } from "nuggets";
+
+const shelf = new NuggetShelf();
+shelf.loadAll();
+
+const added = promoteFacts(shelf);
+console.log(`${added} new entries promoted to MEMORY.md`);
+```
+
+<Tip>
+  Run `promoteFacts` after a reflection pass so that freshly merged and retagged notes are eligible for promotion.
+</Tip>
+
+---
+
+## ReflectionResult
+
+Returned by `reflectAndCleanMemory`.
+
+```typescript
+export interface ReflectionResult {
+  ranAt: string;
+  inspected: number;
+  rewritten: number;
+  merged: number;
+  hidden: number;
+  tagged: number;
+  linked: number;
+  changes: ReflectionChange[];
+}
+```
+
+<ResponseField name="ranAt" type="string" required>
+  ISO 8601 timestamp of when the reflection pass started.
+</ResponseField>
+
+<ResponseField name="inspected" type="number" required>
+  Total number of notes examined during the pass.
+</ResponseField>
+
+<ResponseField name="rewritten" type="number" required>
+  Number of notes whose content was normalised.
+</ResponseField>
+
+<ResponseField name="merged" type="number" required>
+  Number of near-duplicate note pairs that were merged.
+</ResponseField>
+
+<ResponseField name="hidden" type="number" required>
+  Number of low-value notes that were soft-archived.
+</ResponseField>
+
+<ResponseField name="tagged" type="number" required>
+  Number of notes whose tags were updated.
+</ResponseField>
+
+<ResponseField name="linked" type="number" required>
+  Number of new links added between related notes.
+</ResponseField>
+
+<ResponseField name="changes" type="ReflectionChange[]" required>
+  Ordered log of every individual action taken. See [`ReflectionChange`](#reflectionchange).
+</ResponseField>
+
+---
+
+## ReflectionChange
+
+A single action record within a [`ReflectionResult`](#reflectionresult).
+
+```typescript
+export interface ReflectionChange {
+  type: "rewrite" | "merge" | "hide" | "tag" | "link";
+  nuggetName: string;
+  noteId: string;
+  detail: string;
+}
+```
+
+<ResponseField name="type" type='"rewrite" | "merge" | "hide" | "tag" | "link"' required>
+
+  The kind of action performed:
+
+  | Value | Meaning |
+  |---|---|
+  | `"rewrite"` | Note content was normalised. |
+  | `"merge"` | A duplicate note was merged into this note. |
+  | `"hide"` | The note was soft-archived as low-value. |
+  | `"tag"` | The note's tags were updated. |
+  | `"link"` | A new link was added to a related note. |
+
+</ResponseField>
+
+<ResponseField name="nuggetName" type="string" required>
+  Name of the nugget that owns the affected note.
+</ResponseField>
+
+<ResponseField name="noteId" type="string" required>
+  ID of the note that was changed.
+</ResponseField>
+
+<ResponseField name="detail" type="string" required>
+  Human-readable description of what changed. Examples:
+  - `"Normalized duplicated whitespace and repeated lines"`
+  - `"Merged duplicate note note-project-b5c6d7e8"`
+  - `"Tags -> scope:project, type:fact, deploy"`
+  - `"Archived low-value note"`
+  - `"Linked to note-project-c9d0e1f2"`
+</ResponseField>

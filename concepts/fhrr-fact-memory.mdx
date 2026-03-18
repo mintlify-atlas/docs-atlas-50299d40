@@ -1,0 +1,187 @@
+---
+title: "FHRR Fact Memory"
+description: "How Nuggets stores and recalls short key-value facts using Fourier Holographic Reduced Representations — phase-based complex vectors with algebraic bind and unbind operations."
+---
+
+FHRR (Fourier Holographic Reduced Representation) is a technique for storing associations in a single high-dimensional complex vector. Rather than keeping a lookup table of keys and values, FHRR packs multiple associations into one superposition of bound pairs — and can retrieve any value given its key using algebraic operations, without ever scanning a list.
+
+Nuggets uses FHRR as the fast layer of its memory stack. Fact recall typically takes under a millisecond with no external services required.
+
+## Core math primitives
+
+FHRR represents each key and value as a **unit-magnitude complex vector** of dimension D=16384. Every element has the form `e^(iθ)` — a point on the unit circle in the complex plane. The phase angle `θ` carries all the information.
+
+Four operations in `src/nuggets/core.ts` form the foundation:
+
+### bind
+
+`bind(a, b)` combines two vectors into a single bound pair by **adding their phases** element-wise. In split-complex form (`re`/`im` arrays), this is equivalent to element-wise complex multiplication:
+
+```typescript
+// phase(bind(a, b)[d]) = phase(a[d]) + phase(b[d])
+export function bind(a: ComplexVector, b: ComplexVector): ComplexVector
+```
+
+Binding is how a key-value association is encoded. The memory vector is the sum of all bound pairs for facts in a bank.
+
+### unbind
+
+`unbind(memory, key)` recovers the value vector from a memory superposition by **subtracting the key's phase** element-wise. This is the conjugate multiplication of `key`:
+
+```typescript
+// phase(unbind(m, key)[d]) = phase(m[d]) - phase(key[d])
+export function unbind(m: ComplexVector, key: ComplexVector): ComplexVector
+```
+
+After unbinding, you compare the result against all known vocabulary vectors to find the best match.
+
+### orthogonalize
+
+`orthogonalize(keys, iters, step)` nudges a set of randomly generated keys away from each other in complex space, then projects back onto the unit circle. This reduces interference between facts stored in the same bank:
+
+```typescript
+export function orthogonalize(
+  keys: ComplexVector[],
+  iters = 1,
+  step = 0.4,
+): ComplexVector[]
+```
+
+Orthogonalization runs once during memory rebuild, not on every recall.
+
+### sharpen
+
+`sharpen(z, p)` raises the magnitude of each recovered vector element to the power `p`, increasing contrast in noisy superpositions. For clean unit-magnitude keys `p=1.0` is a no-op, but recovered memories carry magnitudes that encode evidence strength:
+
+```typescript
+export function sharpen(z: ComplexVector, p = 1.0, eps = 1e-12): ComplexVector
+```
+
+Higher `p` makes the top candidate stand out more sharply against near-misses.
+
+## How facts are stored
+
+Each `Nugget` instance holds:
+
+- A list of `Fact` objects (key, value, hit count) stored in `<name>.nugget.json`
+- A set of **banks** (default: 4) and **ensembles** (default: 1) built in memory at runtime
+
+When you call `remember(key, value)`, Nuggets:
+
+1. Adds or updates the fact in the `_facts` array
+2. Mirrors the fact into the note graph as a `"fact"` kind note
+3. Marks the memory as `_dirty` so the next recall triggers a rebuild
+4. Auto-saves to disk if `autoSave` is enabled
+
+<Note>
+  Vectors are **never stored on disk**. The `.nugget.json` file only contains the raw key/value strings. FHRR vectors are regenerated from deterministic seeds on every rebuild, which is what keeps files compact.
+</Note>
+
+### Banks and ensembles
+
+Facts are distributed across banks in round-robin order. Each bank stores its own superposition memory vector. Multiple ensembles can be used to reduce variance in recall (the default is 1).
+
+During recall, each bank's memory is unbound independently and the similarity scores are summed across banks before the final softmax step.
+
+### Regenerated vectors
+
+Keys are generated deterministically from the nugget's name using the Mulberry32 PRNG seeded with a hash of the name. This means:
+
+- The same nugget always regenerates identical keys
+- A nugget loaded from disk rebuilds exactly the same FHRR structure
+- No vector data needs to be serialized
+
+```typescript
+// From core.ts — deterministic seed from a string
+export function seedFromName(name: string): number
+
+// Mulberry32 PRNG
+export function mulberry32(seed: number): () => number
+
+// Generate a key from text for graph note vectors
+export function makeKeyFromText(text: string, D: number): ComplexVector
+```
+
+## The recall algorithm
+
+When you call `recall(query)`, Nuggets runs a three-stage process:
+
+<Steps>
+  <Step title="Tag resolution">
+    The query string is matched against stored fact keys in order of strictness:
+
+    1. **Exact match** — lowercase equality
+    2. **Substring match** — the query is contained in the key, or the key is contained in the query
+    3. **Fuzzy match** — a sequence match ratio is computed between the query and each key; the best scoring key above the threshold (default: 0.55) is used
+
+    If no key passes any stage, recall returns `{ found: false }`.
+  </Step>
+  <Step title="Decode">
+    For the resolved key position `pos`, the memory is unbound in two steps:
+
+    ```
+    recovered = unbind(unbind(bank.memory, sentKey), roleKeys[pos])
+    ```
+
+    The `sentKey` encodes the sentence context and `roleKeys[pos]` encodes the position within the bank. The recovered vector is then passed through `sharpen` and `corvacsLite` (a soft magnitude limiter) to clean up the noisy superposition.
+  </Step>
+  <Step title="Softmax scoring">
+    The recovered vector is compared against every known vocabulary vector using cosine similarity. The similarities are summed across all banks and ensembles, then passed through a softmax with temperature T=0.9. The vocabulary word with the highest probability is returned as the answer.
+
+    The result also includes:
+    - `confidence` — the top probability
+    - `margin` — the gap between the top and second probability
+    - `found` — whether the key was resolved
+  </Step>
+</Steps>
+
+## Capacity
+
+The practical capacity of a single nugget is approximately:
+
+```
+capacity ≈ banks × √D = 4 × √16384 = 4 × 128 = 512 facts
+```
+
+The `status()` method reports `capacity_used_pct`. At 80% usage you get a warning; at 90% a critical alert.
+
+<Warning>
+  Storing significantly more than 512 facts in a single nugget degrades recall accuracy. Use multiple nuggets (via `NuggetShelf`) to partition facts by topic.
+</Warning>
+
+## Code example
+
+```typescript
+import { Nugget } from "./src/nuggets/memory.js";
+
+// Create or load a nugget
+const n = new Nugget({ name: "project" });
+
+// Store a fact
+n.remember("test cmd", "pytest tests/ -v");
+n.remember("auth handler", "src/auth/middleware.ts:47");
+
+// Recall by query — exact, substring, or fuzzy
+const result = n.recall("test command");
+if (result.found) {
+  console.log(result.answer);       // "pytest tests/ -v"
+  console.log(result.confidence);   // e.g. 0.87
+  console.log(result.margin);       // gap over second candidate
+}
+
+// Forget a fact
+n.forget("test cmd");
+```
+
+From the CLI:
+
+```bash
+nuggets remember project "test cmd" "pytest tests/ -v"
+nuggets recall "test command"
+nuggets recall "test command" --nugget project
+nuggets forget project "test cmd"
+```
+
+<Tip>
+  If a query you expect to match keeps returning `found: false`, try making the query string closer to the stored key. The fuzzy threshold is 0.55 — a sequence match ratio below that will not resolve. Shorter, more specific query strings usually resolve more reliably than long sentences.
+</Tip>

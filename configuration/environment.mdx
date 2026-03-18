@@ -1,0 +1,180 @@
+---
+title: "Environment Variables"
+description: "Complete reference for every environment variable Nuggets reads at startup, organized by subsystem."
+---
+
+Nuggets reads its configuration from environment variables. Copy `.env.example` to `.env` in the project root and set the values you need. Variables you leave blank use the defaults listed here.
+
+## Messaging channels
+
+Configure at least one channel. The gateway exits at startup if none of `GATEWAY_ALLOWLIST`, `TELEGRAM_BOT_TOKEN`, or `DISCORD_BOT_TOKEN` is set.
+
+### WhatsApp
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `GATEWAY_ALLOWLIST` | `string` | `""` (open) | Comma-separated list of WhatsApp JIDs allowed to message the bot. When empty, the gateway accepts messages from any JID. |
+
+<Warning>
+  An empty `GATEWAY_ALLOWLIST` means anyone who has your number can talk to the bot. Set this to your own JID before exposing the gateway to external networks.
+</Warning>
+
+### Telegram
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | `string` | `""` | Bot token from [@BotFather](https://t.me/BotFather). Required to enable the Telegram channel. |
+| `TELEGRAM_ALLOWLIST` | `string` | `""` (open) | Comma-separated list of Telegram chat IDs allowed to message the bot. When empty, the bot accepts messages from any chat. |
+
+### Discord
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `DISCORD_BOT_TOKEN` | `string` | `""` | Bot token from the Discord developer portal. Required to enable the Discord channel. |
+| `DISCORD_ALLOWED_USER_IDS` | `string` | `""` (closed) | Comma-separated list of Discord user IDs allowed to message the bot. When empty, **all messages are denied**. |
+| `DISCORD_REQUIRE_MENTION` | `boolean` | `true` | When `true`, the bot only responds in servers if the message includes an @mention. Has no effect in DMs. |
+
+<Note>
+  Discord's allowlist defaults to **closed** — unlike WhatsApp and Telegram, an empty `DISCORD_ALLOWED_USER_IDS` denies all messages. You must add at least one user ID to receive replies.
+</Note>
+
+## Agent backend
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `AGENT_BACKEND` | `string` | `"pi"` | Backend to use. One of `pi`, `codex`, or `local`. |
+| `AGENT_PROVIDER` | `string` | `"anthropic"` | Model provider for the `pi` backend. One of `anthropic`, `openai`, or `openai-codex`. Also read from the legacy `PI_PROVIDER` variable. |
+| `AGENT_MODEL` | `string` | `""` | Model name to pass to the provider. Leave empty to use the provider's default. Also read from the legacy `PI_MODEL` variable. |
+
+### Legacy Pi aliases
+
+The following variables are still read for backwards compatibility. Prefer the `AGENT_*` names for new configurations.
+
+| Variable | Equivalent to |
+|---|---|
+| `PI_PROVIDER` | `AGENT_PROVIDER` |
+| `PI_MODEL` | `AGENT_MODEL` |
+| `PI_SKILL_PATHS` | `AGENT_SKILL_PATHS` |
+
+## Codex backend
+
+Used when `AGENT_BACKEND=codex`.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `CODEX_USE_OSS` | `boolean` | `false` | When `true`, uses the open-source Codex CLI instead of the OpenAI-hosted version. |
+| `CODEX_LOCAL_PROVIDER` | `string` | `""` | Local model provider to use with the Codex backend (e.g., `ollama`). |
+| `CODEX_FULL_AUTO` | `boolean` | `true` | When `true`, passes `--full-auto` to the Codex CLI so it can run commands without confirmation prompts. |
+
+## Local model backend
+
+Used when `AGENT_BACKEND=local`. Connects to any OpenAI-compatible server (Ollama, MLX, or similar).
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `LOCAL_MODEL_PROVIDER` | `string` | `"ollama"` when `AGENT_BACKEND=local`, otherwise `""` | Local model provider. Accepted values: `ollama`, `mlx`. Sets the default base URL when `LOCAL_MODEL_BASE_URL` is not specified. |
+| `LOCAL_MODEL_BASE_URL` | `string` | `http://127.0.0.1:11434/v1` for Ollama, `http://127.0.0.1:8080/v1` for MLX | Base URL of the OpenAI-compatible local server. Trailing `/chat/completions` is stripped and re-appended automatically. |
+| `LOCAL_MODEL_API_KEY` | `string` | `""` | API key passed in the `Authorization` header. Leave empty for servers that do not require authentication. |
+
+## Session pool
+
+Controls how many Pi subprocesses the gateway keeps alive at once.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `PI_IDLE_TIMEOUT_MS` | `number` | `300000` (5 min) | Milliseconds of inactivity before an idle Pi process is stopped. The session file is preserved; the next message resumes the session. |
+| `MAX_PI_PROCESSES` | `number` | `5` | Maximum number of simultaneous Pi subprocesses. When the pool is full, the least-recently-active session is evicted. |
+
+## Proactive system
+
+Controls when the gateway reaches out to you without a prompt.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `HEARTBEAT_INTERVAL_MS` | `number` | `1800000` (30 min) | Milliseconds between heartbeat checks per conversation. Set to `0` to disable heartbeats. |
+| `QUIET_HOURS_START` | `number` | `22` (10 PM) | Hour (0–23, server local time) at which the quiet period begins. No proactive messages are sent during quiet hours. Set to `-1` to disable quiet hours. |
+| `QUIET_HOURS_END` | `number` | `8` (8 AM) | Hour (0–23, server local time) at which the quiet period ends and proactive messages resume. |
+| `CRON_EVAL_INTERVAL_MS` | `number` | `60000` (1 min) | Milliseconds between cron expression evaluations. Lower values increase time precision; the minimum useful value is around `10000`. |
+
+## Memory reflection
+
+Controls the daily autonomous memory cleanup pass.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `MEMORY_REFLECTION_HOUR` | `number` | `9` | Hour (0–23, server local time) at which the daily reflection job runs. |
+| `MEMORY_REFLECTION_MINUTE` | `number` | `0` | Minute (0–59) at which the daily reflection job runs. |
+| `MEMORY_REFLECTION_MAX_NOTES` | `number` | `10` | Maximum number of notes the reflection pass inspects per run. |
+
+## Skills
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `AGENT_SKILL_PATHS` | `string` | `""` | Comma- or newline-separated list of absolute paths to additional skill files or skill directories to load. These are loaded before the built-in `skills/` registry and `.pi/skills/` fallbacks. |
+
+---
+
+## Full `.env.example`
+
+<AccordionGroup>
+  <Accordion title="Show .env.example">
+
+```bash
+# ── Messaging Channels ─────────────────────────────────────────
+# Configure at least one channel (WhatsApp, Telegram, or Discord).
+
+# WhatsApp (optional — skip if only using Telegram)
+# Get your JID by sending a message and checking gateway logs.
+GATEWAY_ALLOWLIST=1234567890@s.whatsapp.net
+
+# Telegram (optional — skip if only using WhatsApp)
+# Create a bot via @BotFather, paste the token here.
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+# Your Telegram chat ID (send /start to @userinfobot to find it).
+TELEGRAM_ALLOWLIST=123456789
+
+# Discord (optional — skip if only using Telegram/WhatsApp)
+# Zero-dependency Discord support uses Node.js 22+ for built-in WebSocket/fetch APIs.
+DISCORD_BOT_TOKEN=
+# Comma-separated Discord user IDs allowed to talk to the bot.
+DISCORD_ALLOWED_USER_IDS=
+# In servers, require an @mention before the bot responds.
+DISCORD_REQUIRE_MENTION=true
+
+# ── Agent Backend ─────────────────────────────────────────────
+# Choose one: pi, codex, local
+AGENT_BACKEND=pi
+AGENT_PROVIDER=anthropic
+AGENT_MODEL=
+
+# Legacy Pi compatibility (safe to keep)
+PI_PROVIDER=anthropic
+PI_MODEL=
+
+# Pi provider credentials
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=
+
+# Codex backend
+CODEX_USE_OSS=false
+CODEX_LOCAL_PROVIDER=
+CODEX_FULL_AUTO=true
+
+# Local OpenAI-compatible backend (Ollama / MLX)
+LOCAL_MODEL_PROVIDER=
+LOCAL_MODEL_BASE_URL=
+LOCAL_MODEL_API_KEY=
+
+# ── Agent Session Pool ────────────────────────────────────────
+PI_IDLE_TIMEOUT_MS=300000
+MAX_PI_PROCESSES=5
+
+# ── Proactive System ─────────────────────────────────────────
+HEARTBEAT_INTERVAL_MS=1800000
+QUIET_HOURS_START=22
+QUIET_HOURS_END=8
+CRON_EVAL_INTERVAL_MS=60000
+```
+
+  </Accordion>
+</AccordionGroup>

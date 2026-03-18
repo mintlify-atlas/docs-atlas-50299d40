@@ -1,0 +1,103 @@
+---
+title: "Codex Backend"
+description: "Run Nuggets with the Codex CLI — a code-oriented agent with full shell and file access and recall-first memory prompting."
+---
+
+The Codex backend connects Nuggets to [Codex CLI](https://github.com/openai/codex), a command-line agent that can read and write files, execute shell commands, and work through multi-step tasks. Unlike the Pi backend, Codex does not use a persistent subprocess. Instead, the gateway spawns a new `codex exec` process for each incoming message and tracks conversation continuity through a Codex thread ID.
+
+## Configuration
+
+```bash
+# .env
+AGENT_BACKEND=codex
+AGENT_MODEL=              # Optional — override the default Codex model
+```
+
+### Codex-specific options
+
+| Variable | Default | Description |
+|---|---|---|
+| `CODEX_USE_OSS` | `false` | Pass `--oss` to `codex exec`, enabling open-source model support. |
+| `CODEX_LOCAL_PROVIDER` | _(empty)_ | Pass `--local-provider <name>` to `codex exec` when using a local inference backend. |
+| `CODEX_FULL_AUTO` | `true` | Pass `--full-auto` to `codex exec` so Codex can take actions without asking for confirmation. |
+
+```bash
+# .env
+CODEX_USE_OSS=false
+CODEX_LOCAL_PROVIDER=
+CODEX_FULL_AUTO=true
+```
+
+## How session management works
+
+Codex tracks conversations through thread IDs rather than persistent subprocesses:
+
+<Steps>
+  <Step title="First message">
+    The gateway runs `codex exec <prompt>` with the full system prompt and user message. Codex returns a thread ID in the `thread.started` event.
+  </Step>
+  <Step title="Thread ID is persisted">
+    The gateway saves the thread ID to `codex-thread-id.txt` in the session directory. This file survives restarts.
+  </Step>
+  <Step title="Subsequent messages">
+    For every following message in the same conversation, the gateway runs `codex exec resume <thread-id> <prompt>`, allowing Codex to continue from where it left off.
+  </Step>
+  <Step title="Output capture">
+    Codex is invoked with `--json` so the gateway can parse structured events from stdout and stderr. The last agent message is also written to a file (`codex-last-message.txt`) as a fallback.
+  </Step>
+</Steps>
+
+## Recall-first memory behavior
+
+Codex does not have Pi-style tool hooks, so the gateway embeds the Nuggets memory workflow directly into the system prompt that is prepended to every message:
+
+```text
+Before searching files or code patterns, check memory first with `nuggets recall "..."`.
+After you discover something useful, cache it with `nuggets remember <nugget> "<key>" "<value>"`.
+```
+
+Codex can invoke the `nuggets` command-line interface through its shell tools, giving it effective access to FHRR fact recall and storage even without native tool hooks.
+
+## Skills
+
+### Skills catalog
+
+When you have skills installed, the Codex system prompt includes a structured XML catalog of all available skills:
+
+```text
+Project skills available in this repo:
+Use your file or shell tools to inspect a skill file when the task matches its description.
+When a skill file references a relative path, resolve it against the skill directory.
+
+<available_skills>
+  <skill>
+    <name>reviewer</name>
+    <description>Code review assistant...</description>
+    <triggers>review, check this</triggers>
+    <scope>sticky</scope>
+    <location>/path/to/skills/reviewer/SKILL.md</location>
+  </skill>
+  ...
+</available_skills>
+```
+
+Codex can then read the full `SKILL.md` file for any skill it determines is relevant using its normal file tools. This means Codex only reads skill content on demand rather than loading every skill upfront.
+
+### Active skill inlining
+
+For skills that are already active in the session (triggered by message text or activated with `/skill use`), the full instructions are inlined directly into the prompt under an "Active project skills" heading. Skills with `adapters.codex.enabled` set to `false` in their `skill.json` are excluded from both the catalog and inline sections.
+
+### Scheduling
+
+Codex handles scheduling by writing a JSON line to `.gateway/cron/requests.jsonl`. The system prompt instructs Codex to use the following format:
+
+```text
+When the user asks for a reminder or recurring message, write a JSON line into
+`.gateway/cron/requests.jsonl` using action=add with cron, prompt, oneShot,
+and timestamp fields. Use action=remove to delete a schedule.
+Read `.gateway/cron/jobs.json` to inspect active schedules.
+```
+
+<Note>
+  Codex scheduling depends on the agent having write access to the `.gateway/cron/` directory. With `CODEX_FULL_AUTO=true`, Codex handles this automatically without prompting for confirmation.
+</Note>

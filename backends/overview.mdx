@@ -1,0 +1,81 @@
+---
+title: "Backend Modes"
+description: "Choose between Pi, Codex, and Local backends to control how Nuggets processes messages and uses the memory stack."
+---
+
+A backend is the AI engine that processes each incoming message and decides what to reply. All three backends share the same Nuggets memory stack — FHRR facts, graph notes, and the daily reflection pass — but they differ in how they are invoked, what tools they can use, and how skills are delivered.
+
+You select the backend by setting the `AGENT_BACKEND` environment variable before starting the gateway.
+
+```bash
+# .env
+AGENT_BACKEND=pi   # pi | codex | local
+```
+
+## Backend comparison
+
+| Feature | Pi | Codex | Local |
+|---|---|---|---|
+| Tool use | Full (native Pi tools) | Full (shell and file tools via Codex) | None — conversational only |
+| Nuggets memory tools | `nuggets`, `createNote`, `addLink`, `editNote`, `searchNotes` | Prompted via `nuggets recall` / `nuggets remember` CLI | Not available |
+| Scheduling | `schedule` tool (Pi extension) | Writes to `.gateway/cron/requests.jsonl` | Not available |
+| Memory reflection | `reflectAndCleanMemory` tool (Pi extension) | Prompted via Codex shell tools | Not available |
+| Skills delivery | Passed as real Pi `--skill` files | Skills catalog in prompt; files read on demand | Skill contents inlined into system prompt |
+| Session persistence | Pi session files (JSONL, per conversation) | Codex thread ID (per conversation) | Chat history JSON (last 40 messages) |
+| Provider selection | `AGENT_PROVIDER` + `AGENT_MODEL` | Model via `AGENT_MODEL`, optional OSS flag | `LOCAL_MODEL_PROVIDER` + `LOCAL_MODEL_BASE_URL` |
+| Conversational only | No | No | Yes |
+
+## Environment variables
+
+### Selecting the backend
+
+```bash
+AGENT_BACKEND=pi   # Default. Also accepts: codex, local
+```
+
+### Selecting the provider and model (Pi and Codex)
+
+```bash
+AGENT_PROVIDER=anthropic   # anthropic | openai | openai-codex
+AGENT_MODEL=               # Leave empty to use the provider default
+```
+
+`AGENT_PROVIDER` and `AGENT_MODEL` are read by the Pi backend directly. The Codex backend uses `AGENT_MODEL` when you want to pass a specific model to `codex exec`. The Local backend ignores `AGENT_PROVIDER` entirely and uses `LOCAL_MODEL_PROVIDER` instead.
+
+<Note>
+  `PI_PROVIDER` and `PI_MODEL` are kept for legacy compatibility. When set, they are used as fallbacks for `AGENT_PROVIDER` and `AGENT_MODEL` respectively.
+</Note>
+
+## When to choose each backend
+
+<AccordionGroup>
+  <Accordion title="Pi — full tool use with native memory integration">
+    Choose Pi when you want the richest memory and tool experience. Pi runs as a persistent subprocess per conversation, with the full Nuggets extension loaded. The agent can directly call `nuggets`, `createNote`, `addLink`, `editNote`, `searchNotes`, `schedule`, and `reflectAndCleanMemory` as structured tools. Sessions resume across restarts.
+
+    Best for: personal assistants, long-running projects, anyone who wants deep memory integration and scheduling.
+  </Accordion>
+  <Accordion title="Codex — full tool use via shell and file access">
+    Choose Codex when you want a code-oriented agent that can read, write, and execute files. Codex receives the Nuggets recall-first behavior as prompt instructions and can invoke the `nuggets` CLI directly. The skills catalog is included in the prompt so Codex can read any `SKILL.md` file on demand.
+
+    Best for: software development tasks, automation, users who are already familiar with Codex.
+  </Accordion>
+  <Accordion title="Local — conversational model with no external dependencies">
+    Choose Local when you want to run everything on-device with no cloud API keys. The backend connects directly to an OpenAI-compatible server such as Ollama or MLX. There are no tool calls — the model converses naturally, and active skill contents are inlined into the system prompt.
+
+    Best for: privacy-first setups, offline use, experimentation with local models.
+  </Accordion>
+</AccordionGroup>
+
+## Backend pages
+
+<CardGroup cols={3}>
+  <Card title="Pi" icon="robot" href="/backends/pi">
+    Full tool use with native Nuggets memory extensions, session pools, and Pi skill files.
+  </Card>
+  <Card title="Codex" icon="terminal" href="/backends/codex">
+    Shell and file access via Codex CLI with recall-first memory prompting.
+  </Card>
+  <Card title="Local" icon="server" href="/backends/local">
+    Conversational-only backend for Ollama, MLX, or any OpenAI-compatible local server.
+  </Card>
+</CardGroup>

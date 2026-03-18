@@ -1,0 +1,179 @@
+---
+title: "Built-in Skills"
+description: "The five skills that ship with Nuggets, covering memory, code review, planning, debugging, and research."
+---
+
+Nuggets ships with five skills in the `skills/` registry. Each skill has a defined scope, a set of trigger phrases, and per-backend adapter settings. They are all active by default once triggered and are delivered to the model as described in the [Skills Overview](/skills/overview).
+
+## Skill registry format
+
+Before diving into the individual skills, here is the `skill.json` format that all built-in skills follow:
+
+```json
+{
+  "name": "nuggets-memory",
+  "description": "Recall Nuggets memory before expensive repo searches and save durable discoveries after you learn something useful.",
+  "scope": "sticky",
+  "triggers": [
+    "remember",
+    "memory",
+    "recall",
+    "what did we learn",
+    "what do you know"
+  ],
+  "requires": [
+    "memory",
+    "files"
+  ],
+  "adapters": {
+    "pi": {
+      "enabled": true,
+      "extraPrompt": "Prefer the Nuggets memory tools before broad repo searches."
+    },
+    "codex": {
+      "enabled": true,
+      "extraPrompt": "Start with `nuggets recall` before broader repo exploration."
+    },
+    "local": {
+      "enabled": true,
+      "extraPrompt": "Be explicit that this backend cannot run shell commands if memory actions are requested directly."
+    }
+  }
+}
+```
+
+## The five built-in skills
+
+<AccordionGroup>
+  <Accordion title="nuggets-memory — core memory skill">
+    **Scope:** `sticky` — persists for the rest of the conversation once activated.
+
+    **Triggers:** `remember`, `memory`, `recall`, `what did we learn`, `what do you know`
+
+    **What it does:**
+    Instructs the assistant to check Nuggets memory before doing any expensive file or repo search, and to save durable discoveries after learning something useful. The skill enforces a recall-first workflow:
+
+    1. Try `nuggets recall` before searching files or code patterns.
+    2. Fall back to normal repo exploration only if recall is insufficient.
+    3. After finding something durable, save it with `nuggets remember`.
+    4. Keep facts short. Use graph notes for information that deserves a title and context paragraph.
+
+    **When to use it:**
+    Any task involving codebase exploration, repeated project knowledge, or debugging across sessions. Because it is sticky, it stays active for the entire conversation once triggered.
+
+    **Backend notes:**
+    - Pi: uses Nuggets memory tools directly; prefer them before broad repo searches.
+    - Codex: start with `nuggets recall` CLI before broader exploration.
+    - Local: this backend cannot run shell commands, so memory actions are advisory.
+  </Accordion>
+
+  <Accordion title="reviewer — code review skill">
+    **Scope:** `one-shot` — active only for the message that triggered it.
+
+    **Triggers:** `review`, `code review`, `audit this change`, `regression`, `look for bugs`
+
+    **What it does:**
+    Instructs the assistant to prioritize findings over summaries when reviewing code. The review order is fixed:
+
+    1. Correctness bugs first.
+    2. Behavioral regressions and broken assumptions.
+    3. Missing tests or weak verification.
+    4. A short summary only after all findings.
+
+    Output is severity-ordered with concrete file references where available. If no findings are discovered, the assistant explicitly says so and notes residual risk.
+
+    **When to use it:**
+    Ask for a review, audit, bug hunt, or regression scan. Because the scope is `one-shot`, the skill does not carry over to the next message.
+
+    **Backend notes:**
+    - Pi: lead with findings, not a broad summary.
+    - Codex: present findings ordered by severity with file references when possible.
+    - Local: if code cannot be inspected directly, the review is scoped to the provided context.
+  </Accordion>
+
+  <Accordion title="planner — planning skill">
+    **Scope:** `sticky` — persists for the rest of the conversation once activated.
+
+    **Triggers:** `plan`, `roadmap`, `break this down`, `implementation plan`, `phases`
+
+    **What it does:**
+    Instructs the assistant to break large or ambiguous requests into phased, concrete steps without getting stuck in analysis. The approach follows four steps:
+
+    1. Define the outcome in one sentence.
+    2. Split the work into a few phases.
+    3. Call out main risks or unknowns.
+    4. Identify the next concrete step that creates momentum.
+
+    Plans stay grounded in the current codebase. Long speculative branches are avoided unless explicitly requested. When implementation is clearly expected, the assistant moves from plan to execution quickly.
+
+    **When to use it:**
+    Tasks that are large, ambiguous, or have multiple moving parts. The sticky scope lets the plan persist across the follow-up messages where you implement each phase.
+
+    **Backend notes:**
+    - Pi: keep plans concrete and momentum-oriented.
+    - Codex: prefer short phases with visible checkpoints instead of abstract brainstorming.
+    - Local: no additional adapter constraint.
+  </Accordion>
+
+  <Accordion title="debugger — debugging skill">
+    **Scope:** `sticky` — persists for the rest of the conversation once activated.
+
+    **Triggers:** `debug`, `failing test`, `error`, `broken`, `why is this happening`
+
+    **What it does:**
+    Instructs the assistant to debug failures methodically by reproducing the problem before suggesting fixes. The workflow is:
+
+    1. Reproduce the issue if possible.
+    2. Collect the smallest set of evidence that narrows the cause.
+    3. Change one thing at a time when isolating the bug.
+    4. Validate the fix with the closest useful test or command.
+
+    The skill explicitly guards against jumping straight to rewrites. Targeted instrumentation and small experiments are preferred. If the issue cannot be reproduced, the assistant states what evidence is missing.
+
+    **When to use it:**
+    Anything that is failing, inconsistent, or hard to explain. The sticky scope keeps the debugging approach active throughout a multi-turn investigation.
+
+    **Backend notes:**
+    - Pi: reproduce the issue before suggesting broad fixes.
+    - Codex: prefer narrowing evidence over speculative patching.
+    - Local: be clear when reasoning without runtime access.
+  </Accordion>
+
+  <Accordion title="researcher — research skill">
+    **Scope:** `one-shot` — active only for the message that triggered it.
+
+    **Triggers:** `research`, `investigate`, `look into`, `how does this work`, `where is`
+
+    **What it does:**
+    Instructs the assistant to gather the minimum codebase context needed to answer a question, then distill the answer clearly. The approach:
+
+    1. Find the relevant files and entry points.
+    2. Read enough surrounding context to understand the flow.
+    3. Distill the answer at a high level first.
+    4. Back the answer with direct code references when possible.
+
+    The skill keeps the reading set small, distinguishes confirmed facts from inference, and avoids implementation detail dumps unless the user asks for depth.
+
+    **When to use it:**
+    Tasks where you need to understand, locate, compare, or explain existing code. Because it is `one-shot`, it applies only to the current request and does not persist.
+
+    **Backend notes:**
+    - Pi: no additional adapter constraint.
+    - Codex: prefer primary code references over guesswork.
+    - Local: if repository access is unavailable, keep conclusions tentative.
+  </Accordion>
+</AccordionGroup>
+
+## Quick reference
+
+| Skill | Scope | Triggers | Requires |
+|---|---|---|---|
+| `nuggets-memory` | sticky | remember, memory, recall, what did we learn, what do you know | memory, files |
+| `reviewer` | one-shot | review, code review, audit this change, regression, look for bugs | files |
+| `planner` | sticky | plan, roadmap, break this down, implementation plan, phases | files |
+| `debugger` | sticky | debug, failing test, error, broken, why is this happening | files, shell |
+| `researcher` | one-shot | research, investigate, look into, how does this work, where is | files |
+
+<Note>
+  Trigger matching is case-insensitive and substring-based. If your message contains any trigger phrase from a skill, that skill activates for the request. Sticky skills then remain active for the conversation.
+</Note>

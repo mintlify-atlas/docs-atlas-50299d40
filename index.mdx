@@ -1,97 +1,107 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Nuggets"
+description: "The AI assistant that remembers — FHRR holographic memory, a living note graph, and a multi-channel messaging gateway."
 ---
 
-## Setting up
+## The AI assistant that never forgets
 
-Get your documentation site up and running in minutes.
+Most AI assistants reset between sessions. Nuggets solves this with a three-layer memory system that stays fast, stays local, and gets smarter over time.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
+<CardGroup cols={3}>
+  <Card title="FHRR Fact Memory" icon="bolt" href="/concepts/fhrr-fact-memory">
+    Algebraic recall in under a millisecond — no embeddings, no vector database required.
+  </Card>
+  <Card title="Living Note Graph" icon="diagram-project" href="/concepts/note-graph">
+    Zettelkasten-style notes with titles, tags, links, and FHRR similarity search.
+  </Card>
+  <Card title="Autonomous Rewriting" icon="arrows-rotate" href="/concepts/autonomous-rewriting">
+    Daily cleanup pass that merges duplicates, improves tags, and archives stale notes.
+  </Card>
+</CardGroup>
+
+## Get up and running
+
+<Steps>
+  <Step title="Clone and install">
+    ```bash
+    git clone https://github.com/moonmidas/nuggets.git
+    cd nuggets
+    npm install
+    ```
+  </Step>
+  <Step title="Run setup">
+    ```bash
+    npm run setup
+    ```
+    The interactive wizard walks you through configuring your messaging channels and AI backend.
+  </Step>
+  <Step title="Start the gateway">
+    ```bash
+    npm run dev
+    ```
+    Your assistant is now live on Telegram, WhatsApp, or Discord — whichever channels you configured.
+  </Step>
+</Steps>
+
+<Card title="Full setup guide" icon="rocket" href="/quickstart">
+  Step-by-step instructions including prerequisites, environment variables, and first-message verification.
 </Card>
 
-## Make it yours
+## Everything in one place
 
-Design a docs site that looks great and empowers your users.
+<CardGroup cols={2}>
+  <Card title="Messaging Gateway" icon="messages" href="/gateway/overview">
+    Connect Telegram, WhatsApp, and Discord to a single AI backend.
+  </Card>
+  <Card title="Backend Modes" icon="server" href="/backends/overview">
+    Choose between Pi, Codex CLI, or a local OpenAI-compatible model.
+  </Card>
+  <Card title="Skills" icon="puzzle-piece" href="/skills/overview">
+    Extend the assistant with scoped, triggerable skill files.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/nugget-class">
+    Full TypeScript API for the Nugget class, NuggetShelf, graph notes, and rewrite engine.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
-  </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
+## How memory works
 
-## Create beautiful pages
+Nuggets separates memory into three cooperating layers:
 
-Everything you need to create world-class documentation.
+| Layer | Best for | Storage |
+|---|---|---|
+| **Fact memory** | Short key-value facts recalled by query | `.nugget.json` files |
+| **Note graph** | Rich notes with tags, links, and context | `~/.nuggets/graph/graph.json` |
+| **MEMORY.md** | Permanent, high-value knowledge | Promoted from the graph |
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Info>
+  All memory is local. No cloud database, no embeddings API — just fast algebraic math and JSON files on your machine.
+</Info>
 
-## Need inspiration?
+## Architecture overview
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+```text
+You (Telegram / WhatsApp / Discord)
+  │
+  ▼
+Gateway → router → backend session
+  │                    │
+  │                    ▼
+  │              Nuggets memory stack
+  │              ├─ FHRR facts
+  │              ├─ graph notes
+  │              └─ rewrite pass
+  │
+  ├─ heartbeat
+  ├─ cron reminders
+  └─ daily memory reflection
+```
+
+<CardGroup cols={2}>
+  <Card title="Core concepts" icon="book" href="/concepts/memory-overview">
+    Understand how the three memory layers work together.
+  </Card>
+  <Card title="Configuration reference" icon="sliders" href="/configuration/environment">
+    Every environment variable, with defaults and examples.
+  </Card>
+</CardGroup>

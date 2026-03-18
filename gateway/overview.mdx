@@ -1,0 +1,144 @@
+---
+title: "Gateway Overview"
+description: "How the Nuggets messaging gateway routes messages from Telegram, WhatsApp, and Discord to the AI backend — and how the proactive system keeps working on your behalf."
+---
+
+The gateway is the entry point for every conversation. It connects one or more messaging channels, hands each incoming message to the AI backend, and delivers the reply back through the same channel. It also runs a proactive system that can reach out to you without waiting for you to send a message first.
+
+## How it flows
+
+```text
+You (Telegram / WhatsApp / Discord)
+  |
+  v
+Gateway -> router -> backend session
+  |                    |
+  |                    v
+  |              Nuggets memory stack
+  |              - FHRR facts
+  |              - graph notes
+  |              - rewrite pass
+  |
+  +-> heartbeat
+  +-> cron
+  +-> maintenance events
+  +-> sticky skill state per conversation
+```
+
+### Normal flow
+
+<Steps>
+  <Step title="You send a message">
+    A message arrives over Telegram, WhatsApp, or Discord.
+  </Step>
+  <Step title="The gateway checks the allowlist">
+    Before processing anything, the gateway verifies that the sender is on the allowlist for that channel. Messages from unknown senders are silently dropped.
+  </Step>
+  <Step title="The router enqueues the message">
+    The router places the message in a per-conversation queue. This serializes concurrent messages so the agent always handles one message at a time per conversation.
+  </Step>
+  <Step title="The backend responds">
+    The agent session processes the message, queries memory as needed, and returns a reply.
+  </Step>
+  <Step title="The gateway delivers the reply">
+    The reply is sent back through the same channel using the registered sender for that conversation.
+  </Step>
+</Steps>
+
+### Proactive flow
+
+The gateway also fires proactive events without waiting for a message from you.
+
+<Steps>
+  <Step title="A heartbeat or cron event fires">
+    The heartbeat timer or cron scheduler pushes a `ProactiveEvent` onto the event queue.
+  </Step>
+  <Step title="The router handles the event">
+    The event is enqueued for the target conversation and dispatched to the backend.
+  </Step>
+  <Step title="The agent decides whether to send">
+    For `heartbeat` and `maintenance` events, the agent only sends a message if it has something meaningful to say. If the response is empty or contains `NOTHING`, the gateway stays silent.
+  </Step>
+</Steps>
+
+## Event queue
+
+All proactive triggers — heartbeats, cron jobs, timers, and maintenance runs — flow through a single `EventQueue`. The queue emits each event synchronously as it arrives, and the router serializes processing per conversation using a per-JID promise chain.
+
+Event types:
+
+| Type | Source | Description |
+|---|---|---|
+| `heartbeat` | `HeartbeatManager` | Fires when the user has been inactive for the heartbeat interval |
+| `cron` | `CronScheduler` | Fires when a cron expression matches the current time |
+| `timer` | `CronScheduler` | One-shot variant of a cron job |
+| `maintenance` | `HeartbeatManager` or `CronScheduler` | Silent daily memory reflection pass |
+| `webhook` | — | Reserved for future use |
+
+## Channels
+
+<CardGroup cols={3}>
+  <Card title="Telegram" icon="paper-plane" href="/gateway/telegram">
+    Uses the grammy library for polling. Requires `TELEGRAM_BOT_TOKEN` and supports an optional chat ID allowlist.
+  </Card>
+  <Card title="WhatsApp" icon="whatsapp" href="/gateway/whatsapp">
+    Uses @whiskeysockets/baileys. Connects via a QR code scan and persists the session to disk so you only pair once.
+  </Card>
+  <Card title="Discord" icon="discord" href="/gateway/discord">
+    Zero-dependency implementation using Node.js 22+ built-in WebSocket and fetch. Supports DMs and server channels with optional mention gating.
+  </Card>
+</CardGroup>
+
+## Proactive system
+
+The gateway runs three proactive processes automatically after startup.
+
+### Heartbeat
+
+The `HeartbeatManager` registers a timer for every conversation the bot has had. When the timer fires, the agent checks memory for anything worth surfacing — pending tasks, reminders, or useful information discovered since the last interaction. If it finds nothing, it stays silent.
+
+| Setting | Default | Description |
+|---|---|---|
+| `HEARTBEAT_INTERVAL_MS` | `1800000` (30 min) | How often the heartbeat fires per conversation |
+| `QUIET_HOURS_START` | `22` (10 PM) | Hour at which the heartbeat stops firing |
+| `QUIET_HOURS_END` | `8` (8 AM) | Hour at which the heartbeat resumes |
+
+The heartbeat resets every time you send a message, so it only fires during genuine periods of inactivity.
+
+### Cron scheduler
+
+The `CronScheduler` evaluates all cron jobs once per minute (configurable with `CRON_EVAL_INTERVAL_MS`). Jobs are stored as JSON in `.gateway/cron/jobs.json` and survive restarts. The agent can add and remove jobs at runtime by writing to `.gateway/cron/requests.jsonl`.
+
+| Setting | Default | Description |
+|---|---|---|
+| `CRON_EVAL_INTERVAL_MS` | `60000` (1 min) | How often the scheduler evaluates cron expressions |
+
+### Daily memory reflection
+
+When the first conversation is registered, the cron scheduler installs a hidden daily job that runs `reflectAndCleanMemory()` at 9:00 AM. This pass inspects up to 10 notes, merges near-duplicates, improves tags and links, and archives low-value entries.
+
+| Setting | Default | Description |
+|---|---|---|
+| `MEMORY_REFLECTION_HOUR` | `9` | Hour at which the reflection job runs |
+| `MEMORY_REFLECTION_MINUTE` | `0` | Minute at which the reflection job runs |
+| `MEMORY_REFLECTION_MAX_NOTES` | `10` | Maximum notes inspected per reflection pass |
+
+<Note>
+  The daily reflection job is hidden — it does not appear in the cron job list. It only sends you a message if the cleanup surfaces something you genuinely need to know.
+</Note>
+
+## Allowlist and security
+
+Each channel has its own allowlist:
+
+| Channel | Variable | Behavior when empty |
+|---|---|---|
+| WhatsApp | `GATEWAY_ALLOWLIST` | Open — accepts messages from any JID |
+| Telegram | `TELEGRAM_ALLOWLIST` | Open — accepts messages from any chat ID |
+| Discord | `DISCORD_ALLOWED_USER_IDS` | Closed — denies all messages |
+
+<Warning>
+  WhatsApp and Telegram allowlists default to open when the variable is empty. Set them to your own JID or chat ID before exposing the gateway to external networks.
+</Warning>
+
+The gateway exits at startup if no channel is configured. At least one of `GATEWAY_ALLOWLIST`, `TELEGRAM_BOT_TOKEN`, or `DISCORD_BOT_TOKEN` must be set.

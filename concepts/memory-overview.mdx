@@ -1,0 +1,102 @@
+---
+title: "Memory Overview"
+description: "How Nuggets separates memory into three cooperating layers — FHRR facts, a note graph, and permanent MEMORY.md promotion — and how they work together."
+---
+
+Most agents forget between sessions. RAG (retrieval-augmented generation) solves this, but it typically requires embeddings, a vector database, and external infrastructure to run. Nuggets takes a lighter approach: pure TypeScript, local JSON storage, and algebraic memory math that runs without any network calls.
+
+Instead of one large retrieval store, Nuggets splits memory into three layers with different speeds, capacities, and lifetimes.
+
+## The three layers
+
+| Layer | Mechanism | Speed | Best for | Storage |
+|---|---|---|---|---|
+| **FHRR fact memory** | Phase-based complex vectors | ~1 ms | Short key-value facts recalled by query | `~/.nuggets/<name>.nugget.json` |
+| **Note graph** | Zettelkasten-style JSON graph | Fast | Rich notes with titles, tags, links, and context | `~/.nuggets/graph/graph.json` |
+| **MEMORY.md** | Promoted plain-text file | — | Permanent, high-value knowledge | Project memory directory |
+
+<Info>
+  All three layers are entirely local. There is no cloud database, no embeddings API, and no external service required.
+</Info>
+
+## How the layers work together
+
+The three layers form a pipeline from fast but shallow to slower but richer:
+
+<Steps>
+  <Step title="Recall first">
+    Before searching code or files, query memory with `nuggets recall "what you're looking for"`. If the answer is in the fact layer, you get it back in under a millisecond. If the fact layer misses, the agent can fall back to a graph search.
+  </Step>
+  <Step title="Store what you learn">
+    When the agent discovers something worth keeping, it stores a short fact with `nuggets remember` or creates a note in the graph when the information is too rich for a single key-value pair.
+  </Step>
+  <Step title="Let the graph grow">
+    Notes accumulate over sessions. Each note carries a title, content, tags, and links to related notes. The graph layer handles context that would be awkward to compress into a one-line fact.
+  </Step>
+  <Step title="Promote what sticks">
+    Notes that are recalled three or more times across different sessions are automatically promoted to `MEMORY.md`. This file is read on every session start, so truly important knowledge becomes permanent.
+  </Step>
+  <Step title="Daily reflection cleans up">
+    Around 9:00 AM each day, a quiet reflection pass inspects up to 10 notes. It normalizes content, merges near-duplicates, improves tags, adds links, and archives low-value notes — without any manual intervention.
+  </Step>
+</Steps>
+
+## When to use each layer
+
+<AccordionGroup>
+  <Accordion title="FHRR fact memory">
+    Use facts for short, atomic pieces of information that you want to retrieve by keyword:
+
+    - File locations: `nuggets remember locations "auth handler" "src/auth/middleware.ts:47"`
+    - Commands: `nuggets remember project "test cmd" "pytest tests/ -v"`
+    - Patterns: `nuggets remember project "error handling" "uses Result type, never throws"`
+    - User preferences: `nuggets remember prefs "style" "2-space indent, no semicolons"`
+
+    Facts stay compact on disk because the FHRR vectors are regenerated from deterministic seeds rather than stored. The tradeoff is that recall is approximate — it uses algebraic similarity, not exact text matching.
+  </Accordion>
+  <Accordion title="Note graph">
+    Use notes when the memory is richer than a one-line fact:
+
+    - A durable note with a title and several sentences of context
+    - Something that should link to other related notes
+    - Information the agent might want to rewrite or merge later
+    - Anything with useful metadata like scope, type, or stability
+
+    In Pi-backed flows, the agent gets graph tools directly: `createNote`, `addLink`, `editNote`, and `searchNotes`.
+  </Accordion>
+  <Accordion title="MEMORY.md">
+    You do not write to `MEMORY.md` directly. The `promoteFacts` function handles promotion automatically when a note crosses the recall threshold (3+ hits across sessions). The file is formatted as human-readable markdown grouped by section, so you can also edit it manually if needed.
+  </Accordion>
+</AccordionGroup>
+
+## Recall-first pattern
+
+Nuggets is designed around a recall-first workflow. Before doing any expensive search, always check memory:
+
+```bash
+# 1. Ask memory first
+nuggets recall "authentication middleware location"
+
+# If the result is good enough, use it.
+# If not, do the expensive search, then cache the result:
+nuggets remember locations "auth handler" "src/auth/middleware.ts:47"
+
+# If the information warrants a richer note, create one in the graph:
+# (in Pi-backed flows via the createNote tool)
+```
+
+This pattern means that repeated questions get faster over time as facts and notes accumulate. The daily reflection pass keeps the graph tidy so stale or low-quality entries do not pile up.
+
+## Layer comparison
+
+<CardGroup cols={3}>
+  <Card title="FHRR fact memory" icon="bolt" href="/concepts/fhrr-fact-memory">
+    Phase-based complex vectors, D=16384 dimensions, ~512 facts per nugget, sub-millisecond recall. No stored vectors — regenerated from seeds.
+  </Card>
+  <Card title="Note graph" icon="diagram-project" href="/concepts/note-graph">
+    Zettelkasten-style JSON graph with titles, tags, links, and FHRR-powered semantic search. Stores richer context than facts can hold.
+  </Card>
+  <Card title="Autonomous rewriting" icon="arrows-rotate" href="/concepts/autonomous-rewriting">
+    Daily cleanup pass that merges near-duplicates, improves tags, adds links, archives low-value notes, and promotes high-hit notes to MEMORY.md.
+  </Card>
+</CardGroup>

@@ -1,0 +1,601 @@
+---
+title: "Nugget Class"
+description: "The core memory unit. Each Nugget stores key-value facts in FHRR holographic memory and mirrors them into the note graph."
+---
+
+## Constructor
+
+```typescript
+new Nugget(opts: {
+  name: string;
+  D?: number;
+  banks?: number;
+  ensembles?: number;
+  autoSave?: boolean;
+  saveDir?: string;
+  maxFacts?: number;
+})
+```
+
+<ParamField path="opts.name" type="string" required>
+  Unique identifier for this nugget. Used as the filename (`<name>.nugget.json`) and as the nugget name embedded in every graph note.
+</ParamField>
+
+<ParamField path="opts.D" type="number" default="16384">
+  Dimensionality of the FHRR vectors. Higher values increase storage capacity and recall accuracy at the cost of memory. Must be the same value when reloading a saved nugget.
+</ParamField>
+
+<ParamField path="opts.banks" type="number" default="4">
+  Number of memory banks. Facts are distributed across banks in round-robin order. More banks improve retrieval robustness when the fact set is large.
+</ParamField>
+
+<ParamField path="opts.ensembles" type="number" default="1">
+  Number of independent ensemble copies. Each ensemble uses a separate random key matrix. Increasing this value improves recall at the cost of memory.
+</ParamField>
+
+<ParamField path="opts.autoSave" type="boolean" default="true">
+  When `true`, the nugget writes to disk after every mutating operation (`remember`, `forget`, `clear`, and note mutations). Set to `false` when batching many writes.
+</ParamField>
+
+<ParamField path="opts.saveDir" type="string" default="~/.nuggets">
+  Directory where `<name>.nugget.json` is stored. The note graph is always written to `<saveDir>/graph/graph.json`.
+</ParamField>
+
+<ParamField path="opts.maxFacts" type="number" default="0">
+  Maximum number of facts to retain. When the limit is reached, the oldest facts are evicted in FIFO order and their corresponding graph notes are removed. `0` means unlimited.
+</ParamField>
+
+---
+
+## Methods
+
+### remember
+
+```typescript
+remember(key: string, value: string, noteMeta?: GraphNoteMetaInput): void
+```
+
+Stores or updates a key-value fact. If a fact with the same key (case-insensitive) already exists, its value is overwritten. The fact is mirrored into the note graph as a `"fact"`-kind note.
+
+<ParamField path="key" type="string" required>
+  Lookup key for this fact. Keys are trimmed and compared case-insensitively. Use a scoped prefix such as `user:`, `self:`, `shared:`, or `project:` to set the memory scope explicitly.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  Value to store. Trimmed before saving.
+</ParamField>
+
+<ParamField path="noteMeta" type="GraphNoteMetaInput">
+  Optional metadata to attach to the graph note. See [`GraphNoteMetaInput`](/api-reference/graph-notes#graphnotemetainput).
+</ParamField>
+
+```typescript
+const nugget = new Nugget({ name: "project" });
+nugget.remember("user:preferred-language", "TypeScript");
+nugget.remember("shared:test-command", "pnpm test", { type: "preference" });
+```
+
+---
+
+### recall
+
+```typescript
+recall(
+  query: string,
+  sessionId?: string,
+): { answer: string | null; confidence: number; margin: number; found: boolean; key: string }
+```
+
+Searches holographic memory for a fact matching the query. The lookup is approximate: the engine first tries an exact key match, then substring containment, then fuzzy sequence-match ratio. If `sessionId` is provided, the matched fact's hit counter increments once per session.
+
+<ParamField path="query" type="string" required>
+  The key or partial key to search for.
+</ParamField>
+
+<ParamField path="sessionId" type="string" default='""'>
+  An opaque string identifying the current session. When non-empty and the session hasn't seen this fact before, the hit count increments by one.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="answer" type="string | null">
+  The recalled value, or `null` if no match was found.
+</ResponseField>
+
+<ResponseField name="confidence" type="number">
+  Softmax probability of the top match across all vocabulary entries. Range `[0, 1]`.
+</ResponseField>
+
+<ResponseField name="margin" type="number">
+  Difference between the top-1 and top-2 softmax probabilities. A higher margin means a cleaner, less ambiguous recall.
+</ResponseField>
+
+<ResponseField name="found" type="boolean">
+  `true` when a key matched the query and a value was decoded.
+</ResponseField>
+
+<ResponseField name="key" type="string">
+  The actual key that matched the query.
+</ResponseField>
+
+```typescript
+const result = nugget.recall("preferred-language", "session-abc");
+if (result.found) {
+  console.log(result.answer);     // "TypeScript"
+  console.log(result.confidence); // e.g. 0.97
+  console.log(result.margin);     // e.g. 0.42
+}
+```
+
+---
+
+### forget
+
+```typescript
+forget(key: string): boolean
+```
+
+Removes a fact by key (case-insensitive, trimmed) and deletes the associated graph note.
+
+<ParamField path="key" type="string" required>
+  The key to remove.
+</ParamField>
+
+Returns `true` if a fact was found and removed, `false` if no matching key existed.
+
+```typescript
+const removed = nugget.forget("user:preferred-language");
+console.log(removed); // true
+```
+
+---
+
+### facts
+
+```typescript
+facts(): Array<{ key: string; value: string; hits: number }>
+```
+
+Returns a snapshot of all stored facts. The array is ordered by insertion time.
+
+```typescript
+for (const fact of nugget.facts()) {
+  console.log(`${fact.key} = ${fact.value} (${fact.hits} hits)`);
+}
+```
+
+---
+
+### createNote
+
+```typescript
+createNote(
+  title: string,
+  content: string,
+  tags?: string[],
+  meta?: GraphNoteMetaInput,
+): MemoryNote
+```
+
+Creates a free-form `"note"`-kind graph note. Notes are richer than facts: they have a title, multi-line content, tags, and can carry outbound links.
+
+<ParamField path="title" type="string" required>
+  Note title. Used as the primary search surface and as the human-readable label in the graph.
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  Note body. Whitespace is normalised (trailing spaces trimmed, runs of 3+ blank lines collapsed).
+</ParamField>
+
+<ParamField path="tags" type="string[]" default="[]">
+  Optional tag list. Tags are lower-cased and hyphenated.
+</ParamField>
+
+<ParamField path="meta" type="GraphNoteMetaInput">
+  Optional metadata overrides. See [`GraphNoteMetaInput`](/api-reference/graph-notes#graphnotemetainput).
+</ParamField>
+
+Returns the newly created [`MemoryNote`](/api-reference/graph-notes#memorynote).
+
+```typescript
+const note = nugget.createNote(
+  "CORS fix",
+  "Add the client origin to the allowlist in config.ts line 47.",
+  ["bug", "cors"],
+  { scope: "project", type: "note" },
+);
+console.log(note.id); // "note-project-a1b2c3d4"
+```
+
+---
+
+### editNote
+
+```typescript
+editNote(
+  noteId: string,
+  newContent: string,
+  updates?: {
+    tags?: string[];
+    title?: string;
+    hidden?: boolean;
+    rewrittenAt?: string;
+    noteMeta?: GraphNoteMetaInput;
+  },
+): MemoryNote | null
+```
+
+Replaces the content of an existing note and optionally updates its title, tags, or visibility. If the note is a `"fact"`-kind note, the underlying fact entry is also updated to stay in sync.
+
+<ParamField path="noteId" type="string" required>
+  The ID of the note to edit.
+</ParamField>
+
+<ParamField path="newContent" type="string" required>
+  Replacement content. Whitespace is normalised.
+</ParamField>
+
+<ParamField path="updates.tags" type="string[]">
+  Replacement tag list.
+</ParamField>
+
+<ParamField path="updates.title" type="string">
+  New title. For fact-kind notes this also updates the fact key.
+</ParamField>
+
+<ParamField path="updates.hidden" type="boolean">
+  Set to `true` to soft-archive the note.
+</ParamField>
+
+<ParamField path="updates.rewrittenAt" type="string">
+  ISO 8601 timestamp to record as `lastRewrittenAt`.
+</ParamField>
+
+<ParamField path="updates.noteMeta" type="GraphNoteMetaInput">
+  Metadata overrides applied during the edit.
+</ParamField>
+
+Returns the updated [`MemoryNote`](/api-reference/graph-notes#memorynote), or `null` if the note was not found.
+
+```typescript
+const updated = nugget.editNote(
+  "note-project-a1b2c3d4",
+  "Add origin to allowlist in config.ts:47 and restart the server.",
+  { tags: ["bug", "cors", "resolved"] },
+);
+```
+
+---
+
+### updateNote
+
+```typescript
+updateNote(
+  noteId: string,
+  updates: Partial<Omit<MemoryNote, "id" | "nuggetName">>,
+): MemoryNote | null
+```
+
+Applies a partial patch to any writable fields of a note. Unlike `editNote`, you can update individual fields (such as `hits`, `lastAccessedAt`, or `scope`) without supplying new content.
+
+<ParamField path="noteId" type="string" required>
+  The ID of the note to update.
+</ParamField>
+
+<ParamField path="updates" type="Partial<Omit<MemoryNote, 'id' | 'nuggetName'>>" required>
+  An object with any subset of [`MemoryNote`](/api-reference/graph-notes#memorynote) fields. `id` and `nuggetName` are immutable and ignored if supplied.
+</ParamField>
+
+Returns the updated [`MemoryNote`](/api-reference/graph-notes#memorynote), or `null` if the note was not found.
+
+```typescript
+nugget.updateNote("note-project-a1b2c3d4", {
+  stability: "durable",
+  confidence: 0.95,
+});
+```
+
+---
+
+### deleteNote
+
+```typescript
+deleteNote(noteId: string, hard?: boolean): boolean
+```
+
+Deletes or archives a note. By default, the note is soft-deleted: `hidden` is set to `true` and `archivedAt` is recorded. Pass `hard: true` to permanently remove it from the graph file and strip all incoming links.
+
+<ParamField path="noteId" type="string" required>
+  The ID of the note to delete.
+</ParamField>
+
+<ParamField path="hard" type="boolean" default="false">
+  When `true`, the note is permanently removed. When `false`, it is hidden but remains in the graph.
+</ParamField>
+
+Returns `true` on success, `false` if the note was not found.
+
+<Warning>
+  Hard deletion is irreversible. All incoming links to the note are also removed.
+</Warning>
+
+```typescript
+// Soft archive (reversible)
+nugget.deleteNote("note-project-a1b2c3d4");
+
+// Permanent removal
+nugget.deleteNote("note-project-a1b2c3d4", true);
+```
+
+---
+
+### addLink
+
+```typescript
+addLink(note1: string, note2: string, reason: string): boolean
+```
+
+Creates a bidirectional link between two notes. You can pass a note ID or a note title as either argument.
+
+<ParamField path="note1" type="string" required>
+  ID or title of the first note.
+</ParamField>
+
+<ParamField path="note2" type="string" required>
+  ID or title of the second note.
+</ParamField>
+
+<ParamField path="reason" type="string" required>
+  Human-readable description of why these notes are related. Stored on both link objects.
+</ParamField>
+
+Returns `true` if the link was created, `false` if either note could not be resolved.
+
+```typescript
+nugget.addLink("CORS fix", "note-project-b5c6d7e8", "same module affected");
+```
+
+---
+
+### mergeNotes
+
+```typescript
+mergeNotes(target: string, source: string, reason: string): MemoryNote | null
+```
+
+Merges the `source` note into the `target` note. The target's content gains any unique lines from the source. Tags, links, and hit counts are combined. The source note is soft-archived and a redirect link is added pointing to the target. You can pass a note ID or title for either argument.
+
+<ParamField path="target" type="string" required>
+  ID or title of the note to merge into.
+</ParamField>
+
+<ParamField path="source" type="string" required>
+  ID or title of the note to merge from. Soft-archived after the merge.
+</ParamField>
+
+<ParamField path="reason" type="string" required>
+  Reason stored on the redirect link attached to the source.
+</ParamField>
+
+Returns the updated target [`MemoryNote`](/api-reference/graph-notes#memorynote), or `null` if either note could not be resolved.
+
+```typescript
+const merged = nugget.mergeNotes(
+  "CORS configuration",
+  "CORS fix",
+  "duplicate notes about the same CORS issue",
+);
+```
+
+---
+
+### searchNotes
+
+```typescript
+searchNotes(
+  query: string,
+  limit?: number,
+  opts?: NoteFilterOptions,
+): SearchNotesResult[]
+```
+
+Searches graph notes using a hybrid scoring model that combines FHRR vector similarity (42%), text overlap (48%), and metadata boosts for durable and user-scoped notes.
+
+<ParamField path="query" type="string" required>
+  Free-text search query.
+</ParamField>
+
+<ParamField path="limit" type="number" default="5">
+  Maximum number of results to return.
+</ParamField>
+
+<ParamField path="opts" type="NoteFilterOptions">
+  Optional filters. See [`NoteFilterOptions`](/api-reference/graph-notes#notefilteroptions).
+</ParamField>
+
+Returns an array of [`SearchNotesResult`](/api-reference/graph-notes#searchnotesresult) sorted by score descending.
+
+```typescript
+const results = nugget.searchNotes("CORS", 3);
+for (const { note, score } of results) {
+  console.log(`${note.title} — score ${score.toFixed(3)}`);
+}
+```
+
+---
+
+### listNotes
+
+```typescript
+listNotes(opts?: NoteFilterOptions): MemoryNote[]
+```
+
+Returns all visible notes belonging to this nugget, sorted by `updatedAt` ascending.
+
+<ParamField path="opts" type="NoteFilterOptions">
+  Optional filters. See [`NoteFilterOptions`](/api-reference/graph-notes#notefilteroptions).
+</ParamField>
+
+```typescript
+// All visible notes
+const notes = nugget.listNotes();
+
+// Including archived notes
+const all = nugget.listNotes({ includeHidden: true });
+
+// Only user-scoped fact notes
+const userFacts = nugget.listNotes({ scope: "user", type: "fact" });
+```
+
+---
+
+### getNote
+
+```typescript
+getNote(noteId: string): MemoryNote | null
+```
+
+Retrieves a single note by its ID.
+
+<ParamField path="noteId" type="string" required>
+  The note ID to look up.
+</ParamField>
+
+Returns the [`MemoryNote`](/api-reference/graph-notes#memorynote) or `null` if not found.
+
+```typescript
+const note = nugget.getNote("note-project-a1b2c3d4");
+if (note) {
+  console.log(note.content);
+}
+```
+
+---
+
+### clear
+
+```typescript
+clear(): void
+```
+
+Removes all facts and all graph notes belonging to this nugget. Resets the internal FHRR state. If `autoSave` is enabled, writes the empty nugget to disk.
+
+<Warning>
+  `clear()` is not reversible. All facts and notes are permanently deleted.
+</Warning>
+
+```typescript
+nugget.clear();
+console.log(nugget.facts()); // []
+```
+
+---
+
+### status
+
+```typescript
+status(): {
+  name: string;
+  fact_count: number;
+  dimension: number;
+  banks: number;
+  ensembles: number;
+  capacity_used_pct: number;
+  capacity_warning: string;
+  max_facts: number;
+  note_count: number;
+}
+```
+
+Returns a health snapshot of the nugget.
+
+<ResponseField name="name" type="string">
+  The nugget's name.
+</ResponseField>
+
+<ResponseField name="fact_count" type="number">
+  Number of facts currently stored.
+</ResponseField>
+
+<ResponseField name="dimension" type="number">
+  FHRR vector dimensionality (`D`).
+</ResponseField>
+
+<ResponseField name="banks" type="number">
+  Number of memory banks.
+</ResponseField>
+
+<ResponseField name="ensembles" type="number">
+  Number of ensemble copies.
+</ResponseField>
+
+<ResponseField name="capacity_used_pct" type="number">
+  Estimated percentage of the theoretical FHRR capacity in use. Calculated as `fact_count / (banks × √D) × 100`.
+</ResponseField>
+
+<ResponseField name="capacity_warning" type="string">
+  Empty string when usage is healthy. `"WARNING: approaching capacity"` above 80%. `"CRITICAL: nearly full"` above 90%.
+</ResponseField>
+
+<ResponseField name="max_facts" type="number">
+  The configured `maxFacts` limit. `0` means unlimited.
+</ResponseField>
+
+<ResponseField name="note_count" type="number">
+  Total number of graph notes (including hidden) belonging to this nugget.
+</ResponseField>
+
+```typescript
+const s = nugget.status();
+console.log(`${s.fact_count} facts, ${s.capacity_used_pct}% capacity used`);
+if (s.capacity_warning) console.warn(s.capacity_warning);
+```
+
+---
+
+### save
+
+```typescript
+save(path?: string): string
+```
+
+Persists the nugget to disk. If no path is given, the file is written to `<saveDir>/<name>.nugget.json`. The write is atomic: data is staged to a `.tmp` file and then renamed.
+
+<ParamField path="path" type="string">
+  Explicit output path. Defaults to `<saveDir>/<name>.nugget.json`.
+</ParamField>
+
+Returns the path the file was written to.
+
+```typescript
+const savedPath = nugget.save();
+console.log(`Saved to ${savedPath}`);
+
+// Save to a custom path
+nugget.save("/tmp/backup.nugget.json");
+```
+
+---
+
+### Nugget.load
+
+```typescript
+static load(path: string, opts?: { autoSave?: boolean }): Nugget
+```
+
+Loads a nugget from a `.nugget.json` file. On load, legacy unscoped keys are migrated to scoped form and the FHRR memory is rebuilt from the stored facts.
+
+<ParamField path="path" type="string" required>
+  Absolute or relative path to the `.nugget.json` file.
+</ParamField>
+
+<ParamField path="opts.autoSave" type="boolean" default="true">
+  Whether the loaded nugget should auto-save on mutations.
+</ParamField>
+
+Returns a fully initialised `Nugget` instance ready for use.
+
+```typescript
+const nugget = Nugget.load("~/.nuggets/project.nugget.json");
+console.log(nugget.facts());
+```

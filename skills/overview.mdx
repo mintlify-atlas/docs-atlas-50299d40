@@ -1,0 +1,104 @@
+---
+title: "Skills Overview"
+description: "How skills extend the Nuggets AI assistant with pluggable, context-aware capabilities delivered across all three backends."
+---
+
+Skills are pluggable capability extensions that shape how the assistant behaves for a particular type of task. A skill tells the assistant to act differently — to follow a specific workflow, prioritize certain outputs, or avoid certain patterns — whenever a matching request comes in.
+
+Skills are scoped per conversation, managed with slash commands, and delivered differently depending on which backend you are running.
+
+## Skill format
+
+Every skill lives in its own directory under `skills/` and consists of exactly two files:
+
+```
+skills/
+  <skill-id>/
+    skill.json   # metadata: name, scope, triggers, adapters
+    SKILL.md     # instructions the model reads
+```
+
+`skill.json` defines the skill's identity and behavior settings. `SKILL.md` contains the actual instructions — the text the model reads when the skill is active.
+
+The `SKILL.md` file also carries a YAML frontmatter block so that Pi can load it directly. The `name` and `description` fields in the frontmatter must match `skill.json`.
+
+## How skills are delivered per backend
+
+Each backend handles skills differently based on what it can do.
+
+<AccordionGroup>
+  <Accordion title="Pi backend">
+    Pi receives skills as real Pi skill files via the `--skill` flag. The gateway passes each active skill's `SKILL.md` directly to Pi when spawning or resuming a session. Pi reads the frontmatter and instructions natively.
+
+    Registry skills from `skills/`, compatible fallback skills from `.pi/skills/`, and any extra paths from `AGENT_SKILL_PATHS` are all loaded and passed through.
+  </Accordion>
+  <Accordion title="Codex backend">
+    Codex receives a skills catalog embedded in the system prompt. The catalog lists every available skill with its name, description, triggers, scope, and file path. When a skill is relevant, Codex reads the corresponding `SKILL.md` file on demand using its file tools.
+
+    This lets Codex load detailed instructions only when needed, keeping the prompt lean for requests that do not trigger any skill.
+  </Accordion>
+  <Accordion title="Local backend">
+    The local backend has no file tools, so it cannot read `SKILL.md` files on demand. Instead, the gateway inlines the full contents of every active skill directly into the system prompt before each request.
+
+    Only skills enabled for the `local` adapter are included. If a skill sets `adapters.local.enabled` to `false`, it is excluded.
+  </Accordion>
+</AccordionGroup>
+
+## Skill scopes
+
+Skills have two scopes that control how long they stay active.
+
+| Scope | Behavior |
+|---|---|
+| `one-shot` | Active only for the message that triggered it. Does not persist across turns. |
+| `sticky` | Activated on trigger and then persists for the rest of the conversation. |
+
+Sticky skills are saved to a per-conversation state file (`active-skills.json` in the session directory). They survive gateway restarts and remain active until you explicitly remove them.
+
+## Managing skills with commands
+
+You can list, activate, and deactivate skills from within any conversation using slash commands.
+
+```
+/skills                         List all available skills and their current status
+/skill use reviewer             Activate the reviewer skill for this conversation
+/skill remove reviewer          Deactivate the reviewer skill
+/skill clear                    Clear all sticky skills for this conversation
+```
+
+All aliases work: `/skill` and `/skills` are interchangeable, and `use`, `add`, `on`, and `enable` all activate a skill. Likewise, `remove`, `off`, and `disable` all deactivate one.
+
+<Tip>
+  Sticky skills auto-activate when any of their trigger phrases appear in your message. You do not need to use slash commands for skills with well-matched triggers.
+</Tip>
+
+## Loading extra skill directories
+
+You can load skill files from outside the built-in registry by setting `AGENT_SKILL_PATHS` in your environment.
+
+```bash
+# .env
+AGENT_SKILL_PATHS=/home/you/my-skills,~/shared-skills
+```
+
+Each entry can be:
+- An absolute path to a directory of skills
+- A path starting with `~/` (resolved from your home directory)
+- A path relative to the current working directory
+
+If a name collision occurs between an extra-path skill and a registry skill, the registry skill takes precedence and a warning is logged.
+
+<Note>
+  Pi also loads any skills found in `.pi/skills/` at the project root as a compatibility fallback. These behave like any other skill but are sourced separately from the registry.
+</Note>
+
+## Skills pages
+
+<CardGroup cols={2}>
+  <Card title="Built-in skills" icon="puzzle-piece" href="/skills/built-in">
+    The five skills that ship with Nuggets: memory, reviewer, planner, debugger, and researcher.
+  </Card>
+  <Card title="Custom skills" icon="screwdriver-wrench" href="/skills/custom">
+    How to create your own skill from scratch, including the full skill.json schema and SKILL.md format.
+  </Card>
+</CardGroup>

@@ -1,0 +1,193 @@
+---
+title: "Setup"
+description: "Detailed environment variable reference for channels, backends, session pool, and the proactive system."
+---
+
+All configuration lives in a `.env` file at the project root. Run `npm run setup` to generate this file with an interactive wizard, or create it manually using `.env.example` as a template.
+
+<Warning>
+  You must configure at least one messaging channel (Telegram, WhatsApp, or Discord). The gateway will refuse to start if no channel is configured.
+</Warning>
+
+## Messaging channels
+
+<AccordionGroup>
+  <Accordion title="WhatsApp">
+    WhatsApp support uses the Baileys library. You do not need a business account.
+
+    | Variable | Description |
+    |---|---|
+    | `GATEWAY_ALLOWLIST` | Your WhatsApp JID, for example `1234567890@s.whatsapp.net`. Only messages from this JID are processed. |
+
+    ```bash
+    GATEWAY_ALLOWLIST=1234567890@s.whatsapp.net
+    ```
+
+    <Tip>
+      You can find your JID by sending a message to the bot and checking the gateway logs. It appears in the format `<number>@s.whatsapp.net`.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Telegram">
+    Create a Telegram bot using [@BotFather](https://t.me/BotFather) and copy the token it provides.
+
+    | Variable | Description |
+    |---|---|
+    | `TELEGRAM_BOT_TOKEN` | The bot token from @BotFather, in the format `123456:ABC-DEF...`. |
+    | `TELEGRAM_ALLOWLIST` | Your Telegram chat ID (numeric). Only messages from this ID are processed. |
+
+    ```bash
+    TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+    TELEGRAM_ALLOWLIST=123456789
+    ```
+
+    <Tip>
+      Send `/start` to [@userinfobot](https://t.me/userinfobot) on Telegram to find your chat ID.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Discord">
+    Discord support is zero-dependency and uses Node.js 22+ built-in WebSocket and fetch APIs.
+
+    <Warning>
+      Discord requires **Node.js 22 or later**. Earlier versions do not have the built-in WebSocket support that Nuggets uses.
+    </Warning>
+
+    Create a Discord bot in the [Discord Developer Portal](https://discord.com/developers/applications) and copy the bot token.
+
+    | Variable | Description | Default |
+    |---|---|---|
+    | `DISCORD_BOT_TOKEN` | Your Discord bot token. | — |
+    | `DISCORD_ALLOWED_USER_IDS` | Comma-separated list of Discord user IDs allowed to talk to the bot. | — |
+    | `DISCORD_REQUIRE_MENTION` | When `true`, the bot only responds in servers when directly @mentioned. | `true` |
+
+    ```bash
+    DISCORD_BOT_TOKEN=your-discord-bot-token
+    DISCORD_ALLOWED_USER_IDS=123456789012345678,987654321098765432
+    DISCORD_REQUIRE_MENTION=true
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Agent backend
+
+Set `AGENT_BACKEND` to one of `pi`, `codex`, or `local`.
+
+```bash
+AGENT_BACKEND=pi
+```
+
+<AccordionGroup>
+  <Accordion title="Pi backend (AGENT_BACKEND=pi)">
+    The Pi backend uses the Pi extensions in `.pi/extensions/`. It exposes fact tools, graph tools, scheduling, and memory reflection to the agent.
+
+    | Variable | Description |
+    |---|---|
+    | `AGENT_BACKEND` | Set to `pi`. |
+    | `AGENT_PROVIDER` | Pi provider name: `anthropic`, `openai`, `openai-codex`, or another provider Pi supports. |
+    | `AGENT_MODEL` | Model ID to pass to Pi. Leave empty to use Pi's default for the provider. |
+    | `PI_PROVIDER` | Legacy alias for `AGENT_PROVIDER`. Safe to keep in sync. |
+    | `PI_MODEL` | Legacy alias for `AGENT_MODEL`. Safe to keep in sync. |
+    | `ANTHROPIC_API_KEY` | Required when `AGENT_PROVIDER=anthropic`. Must start with `sk-ant-`. |
+    | `OPENAI_API_KEY` | Required when `AGENT_PROVIDER=openai`. |
+
+    ```bash
+    AGENT_BACKEND=pi
+    AGENT_PROVIDER=anthropic
+    AGENT_MODEL=
+    PI_PROVIDER=anthropic
+    PI_MODEL=
+    ANTHROPIC_API_KEY=sk-ant-...
+    ```
+
+    <Note>
+      Anthropic Max plan does not work with Pi because third-party OAuth was blocked in January 2026. You need an API key from [console.anthropic.com](https://console.anthropic.com/).
+    </Note>
+
+    Skills are loaded from the `skills/` registry, compatible fallback skills from `.pi/skills/`, and any extra paths listed in `AGENT_SKILL_PATHS`.
+  </Accordion>
+
+  <Accordion title="Codex backend (AGENT_BACKEND=codex)">
+    The Codex backend uses `codex exec` and `codex exec resume`. It prompts Codex to use Nuggets recall-first behavior and exposes the skills catalog so Codex can read `SKILL.md` files on demand.
+
+    | Variable | Description | Default |
+    |---|---|---|
+    | `AGENT_BACKEND` | Set to `codex`. | — |
+    | `AGENT_MODEL` | Codex model ID, or a local Ollama model ID when using OSS mode. | — |
+    | `CODEX_USE_OSS` | Set to `true` to run Codex against a local Ollama server. | `false` |
+    | `CODEX_LOCAL_PROVIDER` | Local provider name when `CODEX_USE_OSS=true` (e.g. `ollama`). | — |
+    | `CODEX_FULL_AUTO` | Pass `--full-auto` to Codex for unattended operation. | `true` |
+
+    ```bash
+    AGENT_BACKEND=codex
+    AGENT_MODEL=
+    CODEX_USE_OSS=false
+    CODEX_LOCAL_PROVIDER=
+    CODEX_FULL_AUTO=true
+    ```
+  </Accordion>
+
+  <Accordion title="Local model backend (AGENT_BACKEND=local)">
+    The local backend talks directly to any OpenAI-compatible server, such as Ollama or MLX. It is conversational only — no local tool use. Active skill contents are inlined into the system prompt.
+
+    | Variable | Description | Default |
+    |---|---|---|
+    | `AGENT_BACKEND` | Set to `local`. | — |
+    | `LOCAL_MODEL_PROVIDER` | Provider name: `ollama` or `mlx`. | — |
+    | `LOCAL_MODEL_BASE_URL` | Base URL for the OpenAI-compatible API. | `http://127.0.0.1:11434/v1` (Ollama) or `http://127.0.0.1:8080/v1` (MLX) |
+    | `LOCAL_MODEL_API_KEY` | API key if your local server requires one. Leave empty otherwise. | — |
+    | `AGENT_MODEL` | Model ID served by the local backend. | — |
+
+    ```bash
+    AGENT_BACKEND=local
+    LOCAL_MODEL_PROVIDER=ollama
+    LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
+    LOCAL_MODEL_API_KEY=
+    AGENT_MODEL=llama3
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Session pool
+
+The session pool controls how many backend processes run concurrently and how long idle sessions are kept alive.
+
+| Variable | Description | Default |
+|---|---|---|
+| `PI_IDLE_TIMEOUT_MS` | How long (in milliseconds) an idle session is kept before being shut down. | `300000` (5 minutes) |
+| `MAX_PI_PROCESSES` | Maximum number of concurrent backend sessions. | `5` |
+
+```bash
+PI_IDLE_TIMEOUT_MS=300000
+MAX_PI_PROCESSES=5
+```
+
+## Proactive system
+
+The proactive system sends heartbeat follow-ups, evaluates user-created cron reminders, and triggers the silent daily memory reflection pass.
+
+| Variable | Description | Default |
+|---|---|---|
+| `HEARTBEAT_INTERVAL_MS` | How often (in milliseconds) the heartbeat fires to check if the assistant should message you. | `1800000` (30 minutes) |
+| `QUIET_HOURS_START` | Hour of day (0–23) when quiet hours begin. The assistant will not send proactive messages after this hour. | `22` |
+| `QUIET_HOURS_END` | Hour of day (0–23) when quiet hours end. | `8` |
+| `CRON_EVAL_INTERVAL_MS` | How often (in milliseconds) the cron scheduler checks for due reminders. | `60000` (1 minute) |
+
+```bash
+HEARTBEAT_INTERVAL_MS=1800000
+QUIET_HOURS_START=22
+QUIET_HOURS_END=8
+CRON_EVAL_INTERVAL_MS=60000
+```
+
+<Note>
+  The daily memory reflection pass runs around 9:00 AM, which falls inside the default waking hours window. If the scheduled time is missed, the heartbeat triggers it as a fallback during waking hours.
+</Note>
+
+## Extra skill paths
+
+To load skills from directories outside the built-in `skills/` registry, set `AGENT_SKILL_PATHS` to a comma-separated list of absolute paths:
+
+```bash
+AGENT_SKILL_PATHS=/abs/path/to/my-skills,/another/skill-dir
+```

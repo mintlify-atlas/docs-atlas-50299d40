@@ -1,0 +1,159 @@
+---
+title: "Discord"
+description: "Connect Nuggets to Discord using a zero-dependency WebSocket implementation. Requires Node.js 22+ and a Discord bot token."
+---
+
+The Discord integration implements the Discord Gateway protocol directly using Node.js 22+ built-in `WebSocket` and `fetch` APIs — no additional packages required. The bot supports both direct messages and server channels, with an optional setting to require an @mention before responding in servers.
+
+## Requirements
+
+<Warning>
+  Discord requires **Node.js 22 or later**. Earlier versions do not have the built-in `WebSocket` API that this integration depends on.
+</Warning>
+
+## Environment variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DISCORD_BOT_TOKEN` | Yes | — | Bot token from the Discord developer portal |
+| `DISCORD_ALLOWED_USER_IDS` | Yes | — | Comma-separated Discord user IDs allowed to message the bot |
+| `DISCORD_REQUIRE_MENTION` | No | `true` | In servers, require an @mention before responding |
+
+## Setup
+
+<Steps>
+  <Step title="Create a Discord application and bot">
+    1. Go to the [Discord Developer Portal](https://discord.com/developers/applications).
+    2. Click **New Application** and give it a name.
+    3. Navigate to **Bot** in the left sidebar.
+    4. Click **Add Bot**, then confirm.
+    5. Under **Privileged Gateway Intents**, enable **Message Content Intent** — the bot needs this to read message content.
+    6. Copy the bot token from the **Token** section. Keep it private.
+  </Step>
+
+  <Step title="Invite the bot to your server">
+    1. Navigate to **OAuth2 → URL Generator** in the developer portal.
+    2. Under **Scopes**, select `bot`.
+    3. Under **Bot Permissions**, select:
+       - **Read Messages/View Channels**
+       - **Send Messages**
+       - **Read Message History**
+       - **Add Reactions**
+    4. Copy the generated URL and open it in your browser.
+    5. Select your server and authorize the bot.
+  </Step>
+
+  <Step title="Get your Discord user ID">
+    To find your user ID:
+
+    1. In Discord, go to **User Settings → Advanced** and enable **Developer Mode**.
+    2. Right-click your username anywhere in Discord and select **Copy User ID**.
+
+    The ID is a numeric string like `123456789012345678`.
+  </Step>
+
+  <Step title="Set the environment variables">
+    Add the values to your `.env` file:
+
+    ```bash
+    DISCORD_BOT_TOKEN=your-bot-token-here
+    DISCORD_ALLOWED_USER_IDS=123456789012345678
+    DISCORD_REQUIRE_MENTION=true
+    ```
+
+    To allow multiple users, separate IDs with commas:
+
+    ```bash
+    DISCORD_ALLOWED_USER_IDS=123456789012345678,987654321098765432
+    ```
+  </Step>
+
+  <Step title="Configure mention behavior">
+    Set `DISCORD_REQUIRE_MENTION` based on how you plan to use the bot:
+
+    ```bash
+    # In servers, bot only responds when @mentioned or when replying to the bot (default)
+    DISCORD_REQUIRE_MENTION=true
+
+    # In servers, bot responds to all messages from allowed users
+    DISCORD_REQUIRE_MENTION=false
+    ```
+
+    This setting has no effect in direct messages — the bot always responds to DMs.
+  </Step>
+
+  <Step title="Start the gateway">
+    ```bash
+    npm run dev
+    ```
+
+    The gateway logs `Discord gateway ready` when the WebSocket connection is established and the bot is identified. Send a message (or a DM) to verify.
+  </Step>
+</Steps>
+
+## How DISCORD_REQUIRE_MENTION works
+
+When `DISCORD_REQUIRE_MENTION=true` (the default), the bot only responds to server channel messages in two cases:
+
+1. **The bot is @mentioned** in the message.
+2. **The message is a reply to a previous bot message.**
+
+In both cases, the mention is stripped from the message text before it is forwarded to the agent, so the agent receives only the meaningful content.
+
+```typescript
+// discord.ts — server message gating
+if (!isDm && DISCORD_REQUIRE_MENTION && !mentioned && !repliedToBot) {
+  return;
+}
+```
+
+In **direct messages**, this check is skipped entirely. The bot responds to every DM from an allowed user.
+
+<Tip>
+  Set `DISCORD_REQUIRE_MENTION=false` if you create a dedicated channel for the bot where you do not want to @mention it every time.
+</Tip>
+
+## Allowlist behavior
+
+The `isAllowedDiscordUser` function controls who can message the bot.
+
+- **Empty `DISCORD_ALLOWED_USER_IDS`** — the bot denies all messages. Discord does not default to open like WhatsApp and Telegram.
+- **Populated list** — only user IDs in the list are accepted. All others are ignored.
+
+```typescript
+// config.ts — allowlist check
+export function isAllowedDiscordUser(userId: string): boolean {
+  if (DISCORD_ALLOWED_USER_IDS.size === 0) return false;
+  return DISCORD_ALLOWED_USER_IDS.has(userId);
+}
+```
+
+<Warning>
+  Always set `DISCORD_ALLOWED_USER_IDS`. An empty value means no one can message the bot, including you.
+</Warning>
+
+## Attachments
+
+The Discord integration has full attachment support in both directions:
+
+**Incoming** — when you send a message with file attachments, the gateway downloads each file to `ATTACHMENTS_DIR` (default `.gateway/attachments/`) and includes the file paths in the message forwarded to the agent. The agent can read the files as part of its response.
+
+**Outgoing** — if the agent's reply includes file paths, the gateway uploads them as Discord attachments alongside the reply text. Up to 10 files can be attached per message.
+
+The gateway also tracks typing indicators: it sends a typing event to the channel while the agent is processing, and refreshes it every 8 seconds to keep the "is typing" indicator visible for long responses.
+
+## Progress indicators
+
+While the agent processes a message, the gateway uses Discord reactions on the original message to show progress:
+
+| State | Indicator |
+|---|---|
+| Thinking | Typing indicator in channel |
+| Waiting for permission | Reaction on original message |
+| Error | Reaction on original message |
+
+Reactions are cleaned up automatically when the response is delivered.
+
+## Rate limiting
+
+The `DiscordRestClient` handles Discord's rate limits automatically. It tracks per-bucket and global rate limit headers from every API response and waits before retrying when a `429 Too Many Requests` response is received. Requests are serialized per major resource key (channel, guild, or webhook) to avoid hitting bucket limits.

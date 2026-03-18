@@ -1,0 +1,110 @@
+---
+title: "WhatsApp"
+description: "Connect Nuggets to WhatsApp using @whiskeysockets/baileys. Pairs via QR code and persists the session across restarts."
+---
+
+The WhatsApp integration uses [@whiskeysockets/baileys](https://github.com/WhiskeySockets/Baileys), a Node.js library that implements the WhatsApp Web multi-device protocol. The first time you run the gateway, it generates a QR code in the terminal. You scan it with your phone to authorize the connection. After that, the session is saved to disk and reconnects automatically.
+
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `GATEWAY_ALLOWLIST` | No | Comma-separated WhatsApp JIDs allowed to message the bot |
+
+<Info>
+  WhatsApp is enabled only when `GATEWAY_ALLOWLIST` is non-empty. If the variable is empty, the gateway skips WhatsApp entirely.
+</Info>
+
+## What is a JID?
+
+A JID (Jabber ID) is the internal identifier WhatsApp uses for contacts. For individual contacts it takes the form:
+
+```
+1234567890@s.whatsapp.net
+```
+
+Where `1234567890` is the phone number in international format without the `+` prefix. Group JIDs use a different suffix (`@g.us`) — the gateway processes individual chats only.
+
+## Setup
+
+<Steps>
+  <Step title="Set GATEWAY_ALLOWLIST to your JID">
+    Add your own WhatsApp JID to `.env`. Use your phone number in international format:
+
+    ```bash
+    # Replace with your country code and number, no + prefix
+    GATEWAY_ALLOWLIST=1234567890@s.whatsapp.net
+    ```
+
+    You can add multiple JIDs separated by commas:
+
+    ```bash
+    GATEWAY_ALLOWLIST=1234567890@s.whatsapp.net,0987654321@s.whatsapp.net
+    ```
+  </Step>
+
+  <Step title="Start the gateway">
+    ```bash
+    npm run dev
+    ```
+  </Step>
+
+  <Step title="Scan the QR code">
+    The gateway prints a QR code in the terminal. On your phone, open WhatsApp and go to **Settings → Linked Devices → Link a Device**, then scan the QR code.
+
+    The gateway logs `WhatsApp connected` when the scan succeeds.
+
+    <Note>
+      The QR code expires after about 60 seconds. If it expires before you scan, restart the gateway to get a fresh one.
+    </Note>
+  </Step>
+
+  <Step title="Send a test message">
+    Send any text message to your own number from a WhatsApp account in the allowlist. The gateway receives the message, routes it to the agent, and sends the reply back in the same chat.
+  </Step>
+</Steps>
+
+## Session persistence
+
+After a successful QR scan, Baileys saves authentication credentials to `AUTH_DIR`, which defaults to `.gateway/auth/`. This directory contains multi-file auth state — WhatsApp's equivalent of a cookie session.
+
+- The session survives gateway restarts. You only need to scan the QR code once.
+- If you delete `.gateway/auth/` or the session is invalidated on the WhatsApp side, the gateway logs out and exits with an error. Delete the auth directory and restart to pair again.
+- The gateway reconnects automatically after transient disconnections with a 3-second delay.
+
+<Warning>
+  Do not share or commit the `.gateway/auth/` directory. It contains credentials that give full access to the linked WhatsApp account.
+</Warning>
+
+## Allowlist behavior
+
+The gateway evaluates every incoming message against `GATEWAY_ALLOWLIST`:
+
+- **Empty allowlist** — the gateway skips WhatsApp entirely. WhatsApp only starts when `GATEWAY_ALLOWLIST` has at least one entry.
+- **Populated allowlist** — only messages from JIDs in the list are passed to the router. All other messages are silently ignored.
+
+```typescript
+// config.ts — allowlist check
+export function isAllowedWhatsAppJid(jid: string): boolean {
+  if (ALLOWLIST.size === 0) return true;
+  return ALLOWLIST.has(jid);
+}
+```
+
+Broadcast messages (from `status@broadcast`) are always ignored.
+
+## How messages are routed
+
+Baileys emits a `messages.upsert` event for each incoming message. The gateway:
+
+1. Ignores non-`notify` message types.
+2. Skips broadcast messages and echoes of its own sent messages.
+3. Runs the allowlist check on the sender's JID.
+4. Extracts text from `message.conversation` or `message.extendedTextMessage.text`.
+5. Wraps the message with a `conversationId` of the form `whatsapp:<jid>` and routes it to the agent.
+
+Only text messages are forwarded to the backend. Non-text messages (images, audio, documents) are ignored.
+
+## Attachments
+
+The agent may produce file attachments in its replies. If the reply includes unsupported attachments for WhatsApp, the gateway appends a notice to the text message indicating where the file was saved. The attachment root is `ATTACHMENTS_DIR`, defaulting to `.gateway/attachments/`.
